@@ -9,6 +9,10 @@ current_path <- getActiveDocumentContext()$path
 setwd(dirname(dirname(current_path)))
 rm(current_path)
 
+## Create an H2O cloud ----
+h2o.init(nthreads = -1, max_mem_size = "2G")
+h2o.removeAll() 
+
 # Loadding the data ----
 
 train <- read.csv("datasets/trainingData.csv")
@@ -16,15 +20,6 @@ valid <- read.csv("datasets/validationData.csv")
 
 #Summary some atributes 
 summary(train[,521:529])
-
-# train$BFS <- paste0(train$BUILDINGID, "F", 
-#                            train$FLOOR, "S", train$SPACEID)
-# 
-# x <- unique(train$BFS)
-# TrainingList <- c()
-# for (i in x) {
-#   TrainingList[[i]] <- train %>% dplyr::filter(BFS == i)
-# }
 
 # Plotting with plotly ----
 plot_ly(train, x = ~LATITUDE, y = ~LONGITUDE, z = ~FLOOR, 
@@ -60,15 +55,31 @@ summary(count(paste0("LAT", train$LATITUDE, "LON", train$LONGITUDE, "F",
 
  ## For Validation:
 valid <- valid[order(valid$TIMESTAMP), ]
-valid$concat <- paste0("LAT", valid$LATITUDE, "LON", valid$LONGITUDE, "F", 
-                       valid$FLOOR, "P", valid$PHONEID)
-summary(count(valid$concat))
+summary(count(paste0("LAT", valid$LATITUDE, "LON", valid$LONGITUDE, "F", 
+                     valid$FLOOR, "P", valid$PHONEID)))
+# valid$concat <- paste0("LAT", valid$LATITUDE, "LON", valid$LONGITUDE, "F", 
+#                        valid$FLOOR, "P", valid$PHONEID)
 
-# Join both Datasets, and split them again ----
-set.seed(123)
-sample <- sample.split(rbind(train, valid), SplitRatio = .80)
-newtrain <- subset(rbind(train, valid), sample == TRUE)
-newvalid <- subset(rbind(train, valid), sample == FALSE)
+# Join both Datasets, and split them again with h2o ----
+splits <- h2o.splitFrame(as.h2o(rbind(train, valid)), c(0.6,0.2),
+                         seed=1234)
+newtrain <- h2o.assign(splits[[1]], "train.hex")
+newvalid <- h2o.assign(splits[[2]], "valid.hex")
+test <- h2o.assign(splits[[3]], "test.hex")
+# RF----
+rf1 <- h2o.randomForest(training_frame = newtrain,
+                        validation_frame = newvalid,
+                        x=1:520, y=524, model_id = "rf_covType_v1",
+                        ntrees = 200,
+                        score_each_iteration = T, seed = 1000000)
+
+rf1@model$validation_metrics
+
+gbm1 <- h2o.gbm(training_frame = newtrain,
+                validation_frame = newvalid,
+                x=1:520, y=524, model_id = "gbm_covType1",
+                seed = 2000000)
+gbm1@model$validation_metrics
 
 # Separate data by building in train and valid----
 trainset <- c()
