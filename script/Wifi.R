@@ -9,22 +9,29 @@ current_path <- getActiveDocumentContext()$path
 setwd(dirname(dirname(current_path)))
 rm(current_path)
 
-# Loadding the data ----
+## Create an H2O cloud ----
+h2o.init(nthreads = -1, max_mem_size = "2G")
+h2o.removeAll() 
 
+# Loadding the data ----
 train <- read.csv("datasets/trainingData.csv")
 valid <- read.csv("datasets/validationData.csv")
 
 #Summary some atributes 
 summary(train[,521:529])
 
-# train$BFS <- paste0(train$BUILDINGID, "F", 
-#                            train$FLOOR, "S", train$SPACEID)
-# 
-# x <- unique(train$BFS)
-# TrainingList <- c()
-# for (i in x) {
-#   TrainingList[[i]] <- train %>% dplyr::filter(BFS == i)
-# }
+# Preprocessing ----
+# Rescale WAPs units:
+train <- cbind(apply(train[1:520],2, function(x) 10^(x/10)*100), 
+               train[521:529])
+train <- cbind(apply(train[1:520], c(1,2), function(y) 
+  ifelse(y == 10^12, y <- 0, y <- y)), train[521:529])
+
+# Converting Floor and Building ID into character variables:
+train$BUILDINGID <- as.factor(train$BUILDINGID)
+train$FLOOR <- as.factor(train$FLOOR)
+valid$BUILDINGID <- as.factor(valid$BUILDINGID)
+valid$FLOOR <- as.factor(valid$FLOOR)
 
 # Plotting with plotly ----
 plot_ly(train, x = ~LATITUDE, y = ~LONGITUDE, z = ~FLOOR, 
@@ -44,13 +51,7 @@ plot_ly(valid, x = ~LATITUDE, y = ~LONGITUDE, z = ~FLOOR,
 # UJI in real life:
 grid::grid.raster(readPNG("pictures/UJI_map.png"))
 
-# Preprocessing ----
- # Rescale WAPs units:
-train <- cbind(apply(train[1:520],2, function(x) 10^(x/10)*100), 
-               train[521:529])
-train <- cbind(apply(train[1:520], c(1,2), function(y) 
-  ifelse(y == 10^12, y <- 0, y <- y)), train[521:529])
- # Looking for duplicates -----
+# Looking for duplicates -----
  ## For Training set:
 train <- train[order(train$TIMESTAMP), ]
 summary(count(paste0("LAT", train$LATITUDE, "LON", train$LONGITUDE, "F", 
@@ -60,15 +61,54 @@ summary(count(paste0("LAT", train$LATITUDE, "LON", train$LONGITUDE, "F",
 
  ## For Validation:
 valid <- valid[order(valid$TIMESTAMP), ]
-valid$concat <- paste0("LAT", valid$LATITUDE, "LON", valid$LONGITUDE, "F", 
-                       valid$FLOOR, "P", valid$PHONEID)
-summary(count(valid$concat))
+summary(count(paste0("LAT", valid$LATITUDE, "LON", valid$LONGITUDE, "F", 
+                     valid$FLOOR, "P", valid$PHONEID)))
+# valid$concat <- paste0("LAT", valid$LATITUDE, "LON", valid$LONGITUDE, "F", 
+#                        valid$FLOOR, "P", valid$PHONEID)
 
-# Join both Datasets, and split them again ----
-set.seed(123)
-sample <- sample.split(rbind(train, valid), SplitRatio = .80)
-newtrain <- subset(rbind(train, valid), sample == TRUE)
-newvalid <- subset(rbind(train, valid), sample == FALSE)
+# Join both Datasets, and split them again with h2o ----
+splits <- h2o.splitFrame(as.h2o(rbind(train, valid)), c(0.6,0.2),
+                         seed=1234)
+newtrain <- h2o.assign(splits[[1]], "train.hex")
+newvalid <- h2o.assign(splits[[2]], "valid.hex")
+test <- h2o.assign(splits[[3]], "test.hex")
+
+# Defining dependent and independent variables ----
+ # Dependent:
+lon <- 521
+lat <- 522
+floor <- 523
+build <- 524
+
+ #Independents:
+WAPs <- c(1:520)
+
+# Building Predictions----
+  # RF: 
+rf_build <- h2o.randomForest(training_frame = newtrain,
+                        validation_frame = newvalid,
+                        y = build, x = WAPs, model_id = "rf_covType_v1",
+                        ntrees = 200,
+                        score_each_iteration = T, seed = 1000000)
+
+h2o.performance(rf_build)
+
+  # GBM:
+gbm_build <- h2o.gbm(training_frame = newtrain,
+                validation_frame = newvalid,
+                y = build, x = WAPs, model_id = "gbm_covType1",
+                seed = 2000000)
+
+h2o.performance(gbm_build)
+
+  # GLM:
+glm_build <- h2o.glm(y = build, x = WAPs, training_frame = newtrain,
+                     validation_frame = newvalid, family = "gaussian")
+
+h2o.performance(glm_build)
+
+predict.reg <- as.data.frame(h2o.predict(glm_build, newvalid))
+postResample(as.data.frame(h2o.predict(glm_build, newvalid)), newvalid)
 
 # Separate data by building in train and valid----
 trainset <- c()
@@ -81,15 +121,6 @@ for (i in 0:2) {
   validset[[paste0("build_",i)]] <- newtrain %>% filter(BUILDINGID == i)
 }
 rm(i, sample, newtrain, newvalid)
-
-# Converting FLOOR as factor:
-trainset$build_0$FLOOR <- as.factor(trainset$build_0$FLOOR)
-trainset$build_1$FLOOR <- as.factor(trainset$build_1$FLOOR)
-trainset$build_2$FLOOR <- as.factor(trainset$build_2$FLOOR)
-
-validset$build_0$FLOOR <- as.factor(validset$build_0$FLOOR)
-validset$build_1$FLOOR <- as.factor(validset$build_1$FLOOR)
-validset$build_2$FLOOR <- as.factor(validset$build_2$FLOOR)
 
 # Create data frames per each feature ----
 trainset$build_0_lat <- data.frame(trainset$build_0$LATITUDE, 
