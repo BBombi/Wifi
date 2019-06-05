@@ -3,15 +3,11 @@ if(require("pacman")=="FALSE"){
   install.packages("pacman")
 }
 pacman::p_load(ggplot2, rstudioapi, plyr, purrr, readr, plotly, png, caret,
-               lubridate, cluster, caTools, h2o)
+               lubridate, cluster, caTools)
 
 current_path <- getActiveDocumentContext()$path
 setwd(dirname(dirname(current_path)))
 rm(current_path)
-
-## Create an H2O cloud ----
-h2o.init(nthreads = -1, max_mem_size = "2G")
-h2o.removeAll() 
 
 # Loadding the data ----
 train <- read.csv("datasets/trainingData.csv")
@@ -56,8 +52,6 @@ grid::grid.raster(readPNG("pictures/UJI_map.png"))
 train <- train[order(train$TIMESTAMP), ]
 summary(count(paste0("LAT", train$LATITUDE, "LON", train$LONGITUDE, "F", 
                      train$FLOOR, "P", train$PHONEID)))
-# train$concat <- paste0("LAT", train$LATITUDE, "LON", train$LONGITUDE, "F",
-#                        train$FLOOR, "P", train$PHONEID)
 
  ## For Validation:
 valid <- valid[order(valid$TIMESTAMP), ]
@@ -66,49 +60,58 @@ summary(count(paste0("LAT", valid$LATITUDE, "LON", valid$LONGITUDE, "F",
 # valid$concat <- paste0("LAT", valid$LATITUDE, "LON", valid$LONGITUDE, "F", 
 #                        valid$FLOOR, "P", valid$PHONEID)
 
-# Join both Datasets, and split them again with h2o ----
-splits <- h2o.splitFrame(as.h2o(rbind(train, valid)), c(0.6,0.2),
-                         seed=1234)
-newtrain <- h2o.assign(splits[[1]], "train.hex")
-newvalid <- h2o.assign(splits[[2]], "valid.hex")
-test <- h2o.assign(splits[[3]], "test.hex")
+  # Removing duplicats at the Trainset:
+train$concat <- paste0("LAT", train$LATITUDE, "LON", train$LONGITUDE, "F",
+                       train$FLOOR, "P", train$PHONEID)
+y <- train[!duplicated(train$concat), ]
+train <- train[order(-train$TIMESTAMP), ]
+train <- rbind(y, train[!duplicated(train$concat), ])
+train <- train[!duplicated(y), ]
+train$concat <- NULL
+rm(y)
 
-# Defining dependent and independent variables ----
- # Dependent:
-lon <- 521
-lat <- 522
-floor <- 523
-build <- 524
+# Join both Datasets, and split them again ----
+set.seed(123)
+sample <- sample.split(rbind(train, valid), SplitRatio = .80)
+newtrain <- subset(rbind(train, valid), sample == TRUE)
+newvalid <- subset(rbind(train, valid), sample == FALSE)
 
- #Independents:
-WAPs <- c(1:520)
+# Predicting Building ----
+build <- list(c())
+build$train <- data.frame(newtrain$BUILDINGID, 
+                newtrain[,1:520])
 
-# Building Predictions----
-  # RF: 
-rf_build <- h2o.randomForest(training_frame = newtrain,
-                        validation_frame = newvalid,
-                        y = build, x = WAPs, model_id = "rf_covType_v1",
-                        ntrees = 200,
-                        score_each_iteration = T, seed = 1000000)
+build$valid <- data.frame(newvalid$BUILDINGID, 
+                          newvalid[,1:520])
+ # RF:
+build$rf <- train(newtrain.BUILDINGID ~ ., 
+                    data = build$train,
+                    method = "rf",
+                    tuneGrid=data.frame(mtry=44),
+                    trControl = trainControl(method = "cv",
+                                             number = 5,
+                                             verboseIter = TRUE),
+                    preProcess = "zv")
 
-h2o.performance(rf_build)
+build$pred_rf <- predict(build$rf, newdata = build$valid)
+build$conf_mat_rf <- table(build$pred_rf, build$valid$newvalid.BUILDINGID)
+build$accuracy_rf <- ((sum(diag(build$conf_mat_rf)))/
+                          (sum(build$conf_mat_rf)))*100
 
-  # GBM:
-gbm_build <- h2o.gbm(training_frame = newtrain,
-                validation_frame = newvalid,
-                y = build, x = WAPs, model_id = "gbm_covType1",
-                seed = 2000000)
+  # k-NN:  
+build$knn <- train(newtrain.BUILDINGID ~ ., 
+                   data = build$train, 
+                   method = "knn",
+                   trControl = trainControl(method = "cv",
+                                            number = 5,
+                                            verboseIter = TRUE),
+                   metric = "Accuracy",
+                   preProcess = "zv")
 
-h2o.performance(gbm_build)
-
-  # GLM:
-glm_build <- h2o.glm(y = build, x = WAPs, training_frame = newtrain,
-                     validation_frame = newvalid, family = "gaussian")
-
-h2o.performance(glm_build)
-
-predict.reg <- as.data.frame(h2o.predict(glm_build, newvalid))
-postResample(as.data.frame(h2o.predict(glm_build, newvalid)), newvalid)
+build$pred_knn <- predict(build$knn, newdata = build$valid)
+build$conf_mat_knn <- table(build$pred_knn,build$valid$newvalid.BUILDINGID)
+build$accuracy_knn <- ((sum(diag(build$conf_mat_knn)))/
+                           (sum(build$conf_mat_knn)))*100
 
 # Separate data by building in train and valid----
 trainset <- c()
@@ -341,12 +344,7 @@ accuracy_knn_floor_2 <- ((sum(diag(conf_mat_knn_floor_2)))/
 # method = "zv" identifies numeric predictor columns with a single value (i.e. having zero variance) and excludes them from further calculations.
 rf <- list(c())
 ## Build 0:
-rf$lon0 <- h2o.randomForest(y = trainset.build_0.LONGITUDE,
-                            training_frame = trainset$build_0_lon,
-                            validation_frame = validset$build_0_lon)
-trainset$build_0_lon$trainset.build_0.LONGITUDE
-
-rf_lat_0 <- train(trainset.build_0.LATITUDE ~ ., 
+rf$lat_0 <- train(trainset.build_0.LATITUDE ~ ., 
                    data = trainset$build_0_lat,
                    method = "rf",
                   tuneGrid=data.frame(mtry=32),
@@ -355,12 +353,10 @@ rf_lat_0 <- train(trainset.build_0.LATITUDE ~ .,
                                             verboseIter = TRUE),
                    preProcess = "zv")
 
-plot(rf_lat_0)
-
-pred_rf_lat_0 <- predict(rf_lat_0, newdata = validset$build_0_lat)
-error_rf_lat_0 <- pred_rf_lat_0 - validset$build_0_lat$validset.build_0.LATITUDE
-rmse_rf_lat_0 <- sqrt(mean(error_rf_lat_0^2))
-rsquared_rf_lat_0 <- (1 - (sum(error_rf_lat_0^2) 
+rf$pred_lat_0 <- predict(rf$lat_0, newdata = validset$build_0_lat)
+rf$error_lat_0 <- rf$pred_lat_0 - validset$build_0_lat$validset.build_0.LATITUDE
+rf$rmse_lat_0 <- sqrt(mean(rf$error_lat_0^2))
+rf$rsquared_lat_0 <- (1 - (sum(rf$error_lat_0^2) 
                             / sum((validset$build_0_lat$validset.build_0.LATITUDE - 
                                      mean(validset$build_0_lat$validset.build_0.LATITUDE)
                             )^2)))*100
