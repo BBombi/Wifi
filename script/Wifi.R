@@ -55,30 +55,24 @@ summary(count(paste0("LAT", train$LATITUDE, "LON", train$LONGITUDE, "F",
 valid <- valid[order(valid$TIMESTAMP), ]
 summary(count(paste0("LAT", valid$LATITUDE, "LON", valid$LONGITUDE, "F", 
                      valid$FLOOR, "P", valid$PHONEID)))
-# valid$concat <- paste0("LAT", valid$LATITUDE, "LON", valid$LONGITUDE, "F", 
-#                        valid$FLOOR, "P", valid$PHONEID)
+valid$concat <- paste0("LAT", valid$LATITUDE, "LON", valid$LONGITUDE, "F",
+                       valid$FLOOR, "P", valid$PHONEID)
 
   # Removing duplicats at the Trainset:
 train$concat <- paste0("LAT", train$LATITUDE, "LON", train$LONGITUDE, "F",
                        train$FLOOR, "P", train$PHONEID)
-y <- train[!duplicated(train$concat), ]
-train <- train[order(-train$TIMESTAMP), ]
-train <- rbind(y, train[!duplicated(train$concat), ])
-train <- train[!duplicated(y), ]
-train$concat <- NULL
-rm(y)
+train <- train[!duplicated(train$concat), ]
+newDF <- rbind(train, valid)
+newDF <- newDF[order(-newDF$TIMESTAMP), ]
+newDF <- newDF[!duplicated(newDF$concat), ]
+newDF$concat <- NULL
+
 
 # Join both Datasets, and split them again ----
 set.seed(123)
-x <- rbind(train, valid)
-x$concat <- paste0("LAT", x$LATITUDE, "LON", x$LONGITUDE, "F",
-                       x$FLOOR, "P", x$PHONEID)
-x <- x[order(x$TIMESTAMP), ]
-x <- x[!duplicated(x$concat), ]
-sample <- sample.split(rbind(train, valid), SplitRatio = .80)
-sample <- sample.split(x, SplitRatio = .80)
-newtrain <- subset(rbind(train, valid), sample == TRUE)
-newvalid <- subset(rbind(train, valid), sample == FALSE)
+sample <- sample.split(newDF, SplitRatio = .80)
+newtrain <- subset(newDF, sample == TRUE)
+newvalid <- subset(newDF, sample == FALSE)
 
 # Predicting Building ----
 build <- list(c())
@@ -504,36 +498,36 @@ rf$accuracy_floor_2 <- ((sum(diag(rf$conf_mat_floor_2)))/
                            (sum(rf$conf_mat_floor_2)))*100
 
 # Creating data frames to compare models ----
-metrics7 <- list(c())
-metrics7$building_accuracy <- data.frame(metrics = c("RF", "k-NN"), 
+metrics <- list(c())
+metrics$building_accuracy <- data.frame(metrics = c("RF", "k-NN"), 
                                 values = c(build$accuracy_rf, 
                                            build$accuracy_knn))
 
-metrics7$latitude_rmse <- data.frame(metrics = c("kNN_0", "RF_0", "kNN_1", 
+metrics$latitude_rmse <- data.frame(metrics = c("kNN_0", "RF_0", "kNN_1", 
                                                 "RF_1",  "kNN_2", "RF_2"),
                             values = c(knn$rmse_lat_0, rf$rmse_lat_0, 
                                        knn$rmse_lat_1, rf$rmse_lat_1,
                                        knn$rmse_lat_2, rf$rmse_lat_2))
 
-metrics7$latitude_rsquared <- data.frame(metrics = c("kNN_0", "RF_0", "kNN_1", 
+metrics$latitude_rsquared <- data.frame(metrics = c("kNN_0", "RF_0", "kNN_1", 
                                                  "RF_1",  "kNN_2", "RF_2"),
                                      values = c(knn$rsquared_lat_0, rf$rsquared_lat_0, 
                                                 knn$rsquared_lat_1, rf$rsquared_lat_1,
                                                 knn$rsquared_lat_2, rf$rsquared_lat_2))
 
-metrics7$longitude_rmse <- data.frame(metrics = c("kNN_0", "RF_0", "kNN_1", 
+metrics$longitude_rmse <- data.frame(metrics = c("kNN_0", "RF_0", "kNN_1", 
                                                "RF_1", "kNN_2", "RF_2"),
                             values = c(knn$rmse_lon_0, rf$rmse_lon_0, 
                                        knn$rmse_lon_1, rf$rmse_lon_1,
                                        knn$rmse_lon_2, rf$rmse_lon_2))
 
-metrics7$longitude_rsquared <- data.frame(metrics = c("kNN_0", "RF_0", "kNN_1", 
+metrics$longitude_rsquared <- data.frame(metrics = c("kNN_0", "RF_0", "kNN_1", 
                                                      "RF_1",  "kNN_2", "RF_2"),
                                          values = c(knn$rsquared_lon_0, rf$rsquared_lon_0, 
                                                     knn$rsquared_lon_1, rf$rsquared_lon_1,
                                                     knn$rsquared_lon_2, rf$rsquared_lon_2))
 
-metrics7$floor_accuracy <- data.frame(metrics = c("kNN_0", "RF_0", "kNN_1", 
+metrics$floor_accuracy <- data.frame(metrics = c("kNN_0", "RF_0", "kNN_1", 
                                                  "RF_1", "kNN_2", "RF_2"),
                            values = c(knn$accuracy_floor_0, rf$accuracy_floor_0, 
                                       knn$accuracy_floor_1, rf$accuracy_floor_1,
@@ -547,10 +541,11 @@ metrics7$floor_accuracy <- data.frame(metrics = c("kNN_0", "RF_0", "kNN_1",
  # Metrics6 sames as Metrics3, but with unique train values.
  # Metrics7 sames as Metrics, but with unique values while joining.
 
-metrics7$latitude_rmse %>% 
+metrics$latitude_rmse %>% 
   ggplot(aes(x = metrics, y = values)) + 
   geom_col(aes(fill = metrics)) +
-  geom_text(aes(fill = metrics, label = round(values, digits = 3)), colour = "black") +
+  geom_text(aes(fill = metrics, label = round(values, digits = 3)), 
+            colour = "black") +
   coord_flip() +
   labs(x = "Metrics for each Building",
        y = "RMSE",
@@ -559,10 +554,11 @@ metrics7$latitude_rmse %>%
   scale_fill_brewer(palette = "GnBu") +
   theme(legend.position="none")
 
-metrics7$latitude_rsquared %>% 
+metrics$latitude_rsquared %>% 
   ggplot(aes(x = metrics, y = values)) + 
   geom_col(aes(fill = metrics)) +
-  geom_text(aes(fill = metrics, label = round(values, digits = 3)), colour = "black") +
+  geom_text(aes(fill = metrics, label = round(values, digits = 3)), 
+            colour = "black") +
   coord_flip() +
   labs(x = "Metrics for each Building",
        y = "RSquared",
@@ -571,10 +567,11 @@ metrics7$latitude_rsquared %>%
   scale_fill_brewer(palette = "YlOr") +
   theme(legend.position="none")
 
-metrics7$longitude_rmse %>% 
+metrics$longitude_rmse %>% 
   ggplot(aes(x = metrics, y = values)) + 
   geom_col(aes(fill = metrics)) +
-  geom_text(aes(fill = metrics, label = round(values, digits = 3)), colour = "black") +
+  geom_text(aes(fill = metrics, label = round(values, digits = 3)), 
+            colour = "black") +
   coord_flip() +
   labs(x = "Metrics for each Building",
        y = "RMSE",
@@ -583,10 +580,11 @@ metrics7$longitude_rmse %>%
   scale_fill_brewer(palette = "GnBu") +
   theme(legend.position="none")
 
-metrics7$longitude_rsquared %>% 
+metrics$longitude_rsquared %>% 
   ggplot(aes(x = metrics, y = values)) + 
   geom_col(aes(fill = metrics)) +
-  geom_text(aes(fill = metrics, label = round(values, digits = 3)), colour = "black") +
+  geom_text(aes(fill = metrics, label = round(values, digits = 3)), 
+            colour = "black") +
   coord_flip() +
   labs(x = "Metrics for each Building",
        y = "RSquared",
@@ -595,10 +593,11 @@ metrics7$longitude_rsquared %>%
   scale_fill_brewer(palette = "YlOr") +
   theme(legend.position="none")
 
-metrics7$building_accuracy %>% 
+metrics$building_accuracy %>% 
   ggplot(aes(x = metrics, y = values)) + 
   geom_col(aes(fill = metrics)) +
-  geom_text(aes(fill = metrics, label = round(values, digits = 3)), colour = "black") +
+  geom_text(aes(fill = metrics, label = round(values, digits = 3)), 
+            colour = "black") +
   coord_flip() +
   labs(x = "Metrics for each method",
        y = "Accuracy",
@@ -607,10 +606,11 @@ metrics7$building_accuracy %>%
   scale_fill_brewer(palette = "PuBu") +
   theme(legend.position="none")
 
-metrics7$floor_accuracy %>% 
+metrics$floor_accuracy %>% 
   ggplot(aes(x = metrics, y = values)) + 
   geom_col(aes(fill = metrics)) +
-  geom_text(aes(fill = metrics, label = round(values, digits = 3)), colour = "black") +
+  geom_text(aes(fill = metrics, label = round(values, digits = 3)), 
+            colour = "black") +
   coord_flip() +
   labs(x = "Metrics for each Building",
        y = "Accuracy",
