@@ -1,4 +1,4 @@
-# Wi-Fi Locationing
+# Wi-Fi Location
 
 ## Data Set Information:
 
