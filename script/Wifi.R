@@ -3,7 +3,7 @@ if(require("pacman")=="FALSE"){
   install.packages("pacman")
 }
 pacman::p_load(ggplot2, rstudioapi, plyr, purrr, readr, plotly, png, caret,
-               lubridate, cluster, caTools, RColorBrewer)
+               lubridate, cluster, caTools, RColorBrewer, gridExtra, ISLR)
 
 current_path <- getActiveDocumentContext()$path
 setwd(dirname(dirname(current_path)))
@@ -16,14 +16,7 @@ valid <- read.csv("datasets/validationData.csv")
 #Summary some atributes 
 summary(train[,521:529])
 
-# Preprocessing ----
-# Rescale WAPs units:
-train <- cbind(apply(train[1:520],2, function(x) 10^(x/10)*100), 
-               train[521:529])
-train <- cbind(apply(train[1:520], c(1,2), function(y) 
-  ifelse(y == 10^12, y <- 0, y <- y)), train[521:529])
-
-# Converting Floor and Building ID into character variables:
+# Converting Floor and Building ID into character variables ----
 train$BUILDINGID <- as.factor(train$BUILDINGID)
 valid$BUILDINGID <- as.factor(valid$BUILDINGID)
 
@@ -58,7 +51,7 @@ summary(count(paste0("LAT", valid$LATITUDE, "LON", valid$LONGITUDE, "F",
 valid$concat <- paste0("LAT", valid$LATITUDE, "LON", valid$LONGITUDE, "F",
                        valid$FLOOR, "P", valid$PHONEID)
 
-  # Removing duplicats at the Trainset:
+  # Removing duplicates:
 train$concat <- paste0("LAT", train$LATITUDE, "LON", train$LONGITUDE, "F",
                        train$FLOOR, "P", train$PHONEID)
 train <- train[!duplicated(train$concat), ]
@@ -67,12 +60,19 @@ newDF <- newDF[order(-newDF$TIMESTAMP), ]
 newDF <- newDF[!duplicated(newDF$concat), ]
 newDF$concat <- NULL
 
+# Preprocessing ----
+# Rescale WAPs units:
+newDF <- cbind(apply(newDF[1:520],2, function(x) 10^(x/10)*100), 
+               newDF[521:529])
+newDF <- cbind(apply(newDF[1:520], c(1,2), function(y) 
+  ifelse(y == 10^12, y <- 0, y <- y)), newDF[521:529])
 
 # Join both Datasets, and split them again ----
 set.seed(123)
-sample <- sample.split(newDF, SplitRatio = .80)
-newtrain <- subset(newDF, sample == TRUE)
-newvalid <- subset(newDF, sample == FALSE)
+y <- sample(seq_len(nrow(valid)),size = floor(0.8*nrow(valid)))
+newtrain <- newDF[-y, ]
+newvalid <- newDF[y, ]
+rm(y)
 
 # Predicting Building ----
 build <- list(c())
@@ -81,15 +81,17 @@ build$train <- data.frame(newtrain$BUILDINGID,
 
 build$valid <- data.frame(newvalid$BUILDINGID, 
                           newvalid[,1:520])
+
  # RF:
-build$rf <- train(newtrain.BUILDINGID ~ ., 
-                    data = build$train,
-                    method = "rf",
-                    tuneGrid=data.frame(mtry=44),
-                    trControl = trainControl(method = "cv",
-                                             number = 5,
-                                             verboseIter = TRUE),
-                    preProcess = "zv")
+build$rf <- train(newtrain.BUILDINGID ~ .,
+                  data = build$train,
+                  method = "rf",
+                  tuneGrid=data.frame(mtry=3),
+                  trControl = trainControl(method = "cv",
+                                           number = 5),
+                  preProcess = "zv",
+                  metric = "Accuracy",
+                  tuneLength = 10)
 
 build$pred_rf <- predict(build$rf, newdata = build$valid)
 build$conf_mat_rf <- table(build$pred_rf, build$valid$newvalid.BUILDINGID)
@@ -121,7 +123,7 @@ validset <- c()
 for (i in 0:2) {
   validset[[paste0("build_",i)]] <- newtrain %>% filter(BUILDINGID == i)
 }
-rm(i, sample, newtrain, newvalid)
+rm(i, newtrain, newvalid)
 
 # Create data frames per each feature ----
 trainset$build_0_lat <- data.frame(trainset$build_0$LATITUDE, 
@@ -180,7 +182,7 @@ validset$build_2_floor$validset.build_2.FLOOR <- as.factor(
 
 # k-NN for Latitude ----
 knn <- list(c())
-# method = "zv" identifies numeric predictor columns with a single value (i.e. having zero variance) and excludes them from further calculations.
+# method = "zv" remove attributes with a near zero variance (close to the same value)
   ## Build 0:
 knn$lat_0 <- train(trainset.build_0.LATITUDE ~ ., 
                    data = trainset$build_0_lat,
@@ -540,8 +542,8 @@ metrics$floor_accuracy <- data.frame(metrics = c("kNN_0", "RF_0", "kNN_1",
  # Metrics5 sames as Metrics, but with unique train values.
  # Metrics6 sames as Metrics3, but with unique train values.
  # Metrics7 sames as Metrics, but with unique values while joining.
-
-metrics$latitude_rmse %>% 
+plots <- list(c())
+plots$a <- metrics$latitude_rmse %>% 
   ggplot(aes(x = metrics, y = values)) + 
   geom_col(aes(fill = metrics)) +
   geom_text(aes(fill = metrics, label = round(values, digits = 3)), 
@@ -554,7 +556,7 @@ metrics$latitude_rmse %>%
   scale_fill_brewer(palette = "GnBu") +
   theme(legend.position="none")
 
-metrics$latitude_rsquared %>% 
+plots$b <- metrics$latitude_rsquared %>% 
   ggplot(aes(x = metrics, y = values)) + 
   geom_col(aes(fill = metrics)) +
   geom_text(aes(fill = metrics, label = round(values, digits = 3)), 
@@ -564,10 +566,10 @@ metrics$latitude_rsquared %>%
        y = "RSquared",
        title = "LATITUDE") +
   theme_light() +
-  scale_fill_brewer(palette = "YlOr") +
+  scale_fill_brewer(palette = "PuRd") +
   theme(legend.position="none")
 
-metrics$longitude_rmse %>% 
+plots$c <- metrics$longitude_rmse %>% 
   ggplot(aes(x = metrics, y = values)) + 
   geom_col(aes(fill = metrics)) +
   geom_text(aes(fill = metrics, label = round(values, digits = 3)), 
@@ -580,7 +582,7 @@ metrics$longitude_rmse %>%
   scale_fill_brewer(palette = "GnBu") +
   theme(legend.position="none")
 
-metrics$longitude_rsquared %>% 
+plots$d <- metrics$longitude_rsquared %>% 
   ggplot(aes(x = metrics, y = values)) + 
   geom_col(aes(fill = metrics)) +
   geom_text(aes(fill = metrics, label = round(values, digits = 3)), 
@@ -590,10 +592,10 @@ metrics$longitude_rsquared %>%
        y = "RSquared",
        title = "LONGITUDE") +
   theme_light() +
-  scale_fill_brewer(palette = "YlOr") +
+  scale_fill_brewer(palette = "PuRd") +
   theme(legend.position="none")
 
-metrics$building_accuracy %>% 
+plots$e <- metrics$building_accuracy %>% 
   ggplot(aes(x = metrics, y = values)) + 
   geom_col(aes(fill = metrics)) +
   geom_text(aes(fill = metrics, label = round(values, digits = 3)), 
@@ -606,7 +608,7 @@ metrics$building_accuracy %>%
   scale_fill_brewer(palette = "PuBu") +
   theme(legend.position="none")
 
-metrics$floor_accuracy %>% 
+plots$f <- metrics$floor_accuracy %>% 
   ggplot(aes(x = metrics, y = values)) + 
   geom_col(aes(fill = metrics)) +
   geom_text(aes(fill = metrics, label = round(values, digits = 3)), 
@@ -614,7 +616,12 @@ metrics$floor_accuracy %>%
   coord_flip() +
   labs(x = "Metrics for each Building",
        y = "Accuracy",
-       title = "Foor") +
+       title = "Floor") +
   theme_light() +
   scale_fill_brewer(palette = "PuBu") +
   theme(legend.position="none")
+
+plots$m <- grid.arrange(plots$a, plots$b, plots$c, plots$d, plots$e, plots$f, 
+                         ncol = 2)
+
+
