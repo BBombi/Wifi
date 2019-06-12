@@ -48,6 +48,7 @@ summary(count(paste0("LAT", train$LATITUDE, "LON", train$LONGITUDE, "F",
 valid <- valid[order(valid$TIMESTAMP), ]
 summary(count(paste0("LAT", valid$LATITUDE, "LON", valid$LONGITUDE, "F", 
                      valid$FLOOR, "P", valid$PHONEID)))
+
 valid$concat <- paste0("LAT", valid$LATITUDE, "LON", valid$LONGITUDE, "F",
                        valid$FLOOR, "P", valid$PHONEID)
 
@@ -69,7 +70,7 @@ newDF <- cbind(apply(newDF[1:520], c(1,2), function(y)
 
 # Join both Datasets, and split them again ----
 set.seed(123)
-y <- sample(seq_len(nrow(valid)),size = floor(0.8*nrow(valid)))
+y <- sample(seq_len(nrow(newDF)),size = floor(0.8*nrow(newDF)))
 newtrain <- newDF[-y, ]
 newvalid <- newDF[y, ]
 rm(y)
@@ -112,6 +113,31 @@ build$pred_knn <- predict(build$knn, newdata = build$valid)
 build$conf_mat_knn <- table(build$pred_knn,build$valid$newvalid.BUILDINGID)
 build$accuracy_knn <- ((sum(diag(build$conf_mat_knn)))/
                            (sum(build$conf_mat_knn)))*100
+=======
+# valid$concat <- paste0("LAT", valid$LATITUDE, "LON", valid$LONGITUDE, "F", 
+#                        valid$FLOOR, "P", valid$PHONEID)
+
+# Join both Datasets, and split them again with h2o ----
+splits <- h2o.splitFrame(as.h2o(rbind(train, valid)), c(0.6,0.2),
+                         seed=1234)
+newtrain <- h2o.assign(splits[[1]], "train.hex")
+newvalid <- h2o.assign(splits[[2]], "valid.hex")
+test <- h2o.assign(splits[[3]], "test.hex")
+# RF----
+rf1 <- h2o.randomForest(training_frame = newtrain,
+                        validation_frame = newvalid,
+                        x=1:520, y=524, model_id = "rf_covType_v1",
+                        ntrees = 200,
+                        score_each_iteration = T, seed = 1000000)
+
+rf1@model$validation_metrics
+
+gbm1 <- h2o.gbm(training_frame = newtrain,
+                validation_frame = newvalid,
+                x=1:520, y=524, model_id = "gbm_covType1",
+                seed = 2000000)
+gbm1@model$validation_metrics
+>>>>>>> d6f32a6e5a5eae0b6c38f40e2a26d8cb919673b2
 
 # Separate data by building in train and valid----
 trainset <- c()
