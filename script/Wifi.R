@@ -3,7 +3,8 @@ if(require("pacman")=="FALSE"){
   install.packages("pacman")
 }
 pacman::p_load(ggplot2, rstudioapi, plyr, purrr, readr, plotly, png, caret,
-               lubridate, cluster, caTools, RColorBrewer, gridExtra, ISLR)
+               lubridate, cluster, caTools, RColorBrewer, gridExtra, ISLR,
+               gbm)
 
 current_path <- getActiveDocumentContext()$path
 setwd(dirname(dirname(current_path)))
@@ -16,7 +17,7 @@ valid <- read.csv("datasets/validationData.csv")
 #Summary some atributes 
 summary(train[,521:529])
 
-# Converting Floor and Building ID into character variables ----
+# Converting Floor and Phone ID into character variables ----
 train$BUILDINGID <- as.factor(train$BUILDINGID)
 valid$BUILDINGID <- as.factor(valid$BUILDINGID)
 
@@ -38,81 +39,77 @@ plot_ly(valid, x = ~LATITUDE, y = ~LONGITUDE, z = ~FLOOR,
 # UJI in real life:
 grid::grid.raster(readPNG("pictures/UJI_map.png"))
 
-# Looking for duplicates -----
-## For Training set:
-train <- train[order(train$TIMESTAMP), ]
-summary(count(paste0("LAT", train$LATITUDE, "LON", train$LONGITUDE, "F", 
-                     train$FLOOR, "P", train$PHONEID)))
-
-## For Validation:
-valid <- valid[order(valid$TIMESTAMP), ]
-summary(count(paste0("LAT", valid$LATITUDE, "LON", valid$LONGITUDE, "F", 
-                     valid$FLOOR, "P", valid$PHONEID)))
-
-valid$concat <- paste0("LAT", valid$LATITUDE, "LON", valid$LONGITUDE, "F",
-                       valid$FLOOR, "P", valid$PHONEID)
-
-# Removing duplicates:
-train$concat <- paste0("LAT", train$LATITUDE, "LON", train$LONGITUDE, "F",
-                       train$FLOOR, "P", train$PHONEID)
-train <- train[!duplicated(train$concat), ]
-newDF <- rbind(train, valid)
-newDF <- newDF[order(-newDF$TIMESTAMP), ]
-newDF <- newDF[!duplicated(newDF$concat), ]
-newDF$concat <- NULL
-
+# Removing duplicates: -----
+train <- train[!duplicated(train), ]
 # Preprocessing ----
 # Rescale WAPs units:
-newDF <- cbind(apply(newDF[1:520],2, function(x) 10^(x/10)*100), 
-               newDF[521:529])
-newDF <- cbind(apply(newDF[1:520], c(1,2), function(y) 
-  ifelse(y == 10^12, y <- 0, y <- y)), newDF[521:529])
+train <- cbind(apply(train[1:520],2, function(x) 10^(x/10)*100), 
+               train[521:529])
+train <- cbind(apply(train[1:520], c(1,2), function(y) 
+  ifelse(y == 10^12, y <- 0, y <- y)), train[521:529])
 
-# Join both Datasets, and split them again ----
-set.seed(123)
-y <- sample(seq_len(nrow(newDF)),size = floor(0.8*nrow(newDF)))
-newtrain <- newDF[-y, ]
-newvalid <- newDF[y, ]
-rm(y)
+valid <- cbind(apply(valid[1:520],2, function(x) 10^(x/10)*100), 
+               valid[521:529])
+valid <- cbind(apply(valid[1:520], c(1,2), function(y) 
+  ifelse(y == 10^12, y <- 0, y <- y)), valid[521:529])
+
+# Removing Near Zero Variance WAPs:
+x <- nearZeroVar(train[ ,1:520], saveMetrics = TRUE)
+# New datasets
+newtrain <- train[ ,c(which(x$percentUnique > 0.010362695), 521:529)] %>% 
+  dplyr::group_by(BUILDINGID, FLOOR, LATITUDE, LONGITUDE, PHONEID) %>%
+  dplyr::sample_frac(0.4)
+newvalid <- valid[ ,c(which(x$percentUnique > 0.010362695), 521:529)]
 
 # Predicting Building ----
 build <- list(c())
-build$train <- data.frame(newtrain$BUILDINGID, 
-                          newtrain[,1:520])
+build$train <- data.frame(newtrain$BUILDINGID, newtrain[,c(1:(ncol(newtrain)-9))])
 
-build$valid <- data.frame(newvalid$BUILDINGID, 
-                          newvalid[,1:520])
+build$valid <- data.frame(newvalid$BUILDINGID, newvalid[,c(1:(ncol(newvalid)-9))])
 
-# RF:
-build$rf <- train(newtrain.BUILDINGID ~ .,
-                  data = build$train,
-                  method = "rf",
-                  tuneGrid=data.frame(mtry=3),
-                  trControl = trainControl(method = "cv",
-                                           number = 5),
-                  preProcess = "zv",
-                  metric = "Accuracy",
-                  tuneLength = 10)
+methods <- c("rf", "knn", "gmb")
+control <- c()
 
-build$pred_rf <- predict(build$rf, newdata = build$valid)
-build$conf_mat_rf <- table(build$pred_rf, build$valid$newvalid.BUILDINGID)
-build$accuracy_rf <- ((sum(diag(build$conf_mat_rf)))/
-                        (sum(build$conf_mat_rf)))*100
+for (i in methods) {
+  ifelse(i = "rf", control <- trainControl(method = "cv",
+                                           number = 2,
+                                           verboseIter = TRUE),
+         control <- trainControl(method = "cv",
+                                 number = 5,
+                                 verboseIter = TRUE))
+  
+  build[[rf]] <- train(newtrain.BUILDINGID ~ ., 
+                       data = build$train, 
+                       method = "rf",
+                       tuneGrid = ifelse(i = "rf", data.frame(mtry=c(22,29,30)),
+                                         NULL),
+                       trControl = control,
+                       metric = "Accuracy",
+                       preProcess = "zv")
+  
+  build[[paste0("pred_",i)]] <- predict(build[[i]], newdata = build$valid)
+  build[[paste0("conf_mat_",i)]] <- table(build[[paste0("pred_",i)]], 
+                                          build$valid$newvalid.BUILDINGID)
+  build[[paste0("accuracy_",i)]] <- ((sum(diag(build[[paste0("conf_mat_",i)]])))/
+                                       (sum(build[[paste0("conf_mat_",i)]])))*100
+}
 
-# k-NN:  
-build$knn <- train(newtrain.BUILDINGID ~ ., 
-                   data = build$train, 
-                   method = "knn",
-                   trControl = trainControl(method = "cv",
-                                            number = 5,
-                                            verboseIter = TRUE),
-                   metric = "Accuracy",
-                   preProcess = "zv")
+# The majority vote
+build$pred_majority <- as.factor(
+  ifelse(build$pred_knn=='0' & build$pred_rf=='0' | 
+           build$pred_knn=='0' & build$pred_gbm=='0' | 
+           build$pred_rf=='0' & build$pred_gbm=='0','0',
+         ifelse(build$pred_knn=='1' & build$pred_rf=='1' | 
+                  build$pred_knn=='1' & build$pred_gbm=='1' | 
+                  build$pred_rf=='1' & build$pred_gbm=='1','1',
+                ifelse(build$pred_knn=='2' & build$pred_rf=='2' |
+                         build$pred_knn=='2' & build$pred_gbm=='2' | 
+                         build$pred_rf=='2' & build$pred_gbm=='2',
+                       '2',build$pred_gbm))))
 
-build$pred_knn <- predict(build$knn, newdata = build$valid)
-build$conf_mat_knn <- table(build$pred_knn,build$valid$newvalid.BUILDINGID)
-build$accuracy_knn <- ((sum(diag(build$conf_mat_knn)))/
-                         (sum(build$conf_mat_knn)))*100
+build$conf_mat_majority <- table(build$pred_majority, build$valid$newvalid.BUILDINGID)
+build$accuracy_majority <- ((sum(diag(build$conf_mat_majority)))/
+                              (sum(build$conf_mat_majority)))*100
 
 # Separate data by building in train and valid----
 trainset <- c()
@@ -122,62 +119,63 @@ for (i in 0:2) {
 
 validset <- c()
 for (i in 0:2) {
-  validset[[paste0("build_",i)]] <- newtrain %>% filter(BUILDINGID == i)
+  validset[[paste0("build_",i)]] <- newvalid %>% filter(BUILDINGID == i)
 }
+
 rm(i, newtrain, newvalid)
 
 # Create data frames per each feature ----
 trainset$build_0_lat <- data.frame(trainset$build_0$LATITUDE, 
-                                   trainset$build_0[,1:520])
+                                   trainset$build_0[,c(1:428)])
 trainset$build_0_lon <- data.frame(trainset$build_0$LONGITUDE, 
-                                   trainset$build_0[,1:520])
+                                   trainset$build_0[,c(1:428)])
 trainset$build_0_floor <- data.frame(trainset$build_0$FLOOR, 
-                                     trainset$build_0[,1:520])
+                                     trainset$build_0[,c(1:428)])
 trainset$build_0_floor$trainset.build_0.FLOOR <- as.factor(
   trainset$build_0_floor$trainset.build_0.FLOOR)
 
 trainset$build_1_lat <- data.frame(trainset$build_1$LATITUDE, 
-                                   trainset$build_1[,1:520])
+                                   trainset$build_1[,c(1:428)])
 trainset$build_1_lon <- data.frame(trainset$build_1$LONGITUDE, 
-                                   trainset$build_1[,1:520])
+                                   trainset$build_1[,c(1:428)])
 trainset$build_1_floor <- data.frame(trainset$build_1$FLOOR, 
-                                     trainset$build_1[,1:520])
+                                     trainset$build_1[,c(1:428)])
 trainset$build_1_floor$trainset.build_1.FLOOR <- as.factor(
   trainset$build_1_floor$trainset.build_1.FLOOR)
 
 trainset$build_2_lat <- data.frame(trainset$build_2$LATITUDE, 
-                                   trainset$build_2[,1:520])
+                                   trainset$build_2[,c(1:428)])
 trainset$build_2_lon <- data.frame(trainset$build_2$LONGITUDE, 
-                                   trainset$build_2[,1:520])
+                                   trainset$build_2[,c(1:428)])
 trainset$build_2_floor <- data.frame(trainset$build_2$FLOOR, 
-                                     trainset$build_2[,1:520])
+                                     trainset$build_2[,c(1:428)])
 trainset$build_2_floor$trainset.build_2.FLOOR <- as.factor(
   trainset$build_2_floor$trainset.build_2.FLOOR)
 
 validset$build_0_lat <- data.frame(validset$build_0$LATITUDE, 
-                                   validset$build_0[,1:520])
+                                   validset$build_0[,c(1:428)])
 validset$build_0_lon <- data.frame(validset$build_0$LONGITUDE, 
-                                   validset$build_0[,1:520])
+                                   validset$build_0[,c(1:428)])
 validset$build_0_floor <- data.frame(validset$build_0$FLOOR, 
-                                     validset$build_0[,1:520])
+                                     validset$build_0[,c(1:428)])
 validset$build_0_floor$validset.build_0.FLOOR <- as.factor(
   validset$build_0_floor$validset.build_0.FLOOR)
 
 validset$build_1_lat <- data.frame(validset$build_1$LATITUDE, 
-                                   validset$build_1[,1:520])
+                                   validset$build_1[,c(1:428)])
 validset$build_1_lon <- data.frame(validset$build_1$LONGITUDE, 
-                                   validset$build_1[,1:520])
+                                   validset$build_1[,c(1:428)])
 validset$build_1_floor <- data.frame(validset$build_1$FLOOR, 
-                                     validset$build_1[,1:520])
+                                     validset$build_1[,c(1:428)])
 validset$build_1_floor$validset.build_1.FLOOR <- as.factor(
   validset$build_1_floor$validset.build_1.FLOOR)
 
 validset$build_2_lat <- data.frame(validset$build_2$LATITUDE, 
-                                   validset$build_2[,1:520])
+                                   validset$build_2[,c(1:428)])
 validset$build_2_lon <- data.frame(validset$build_2$LONGITUDE, 
-                                   validset$build_2[,1:520])
+                                   validset$build_2[,c(1:428)])
 validset$build_2_floor <- data.frame(validset$build_2$FLOOR, 
-                                     validset$build_2[,1:520])
+                                     validset$build_2[,c(1:428)])
 validset$build_2_floor$validset.build_2.FLOOR <- as.factor(
   validset$build_2_floor$validset.build_2.FLOOR)
 
@@ -344,10 +342,11 @@ rf$lat_0 <- train(trainset.build_0.LATITUDE ~ .,
                   data = trainset$build_0_lat,
                   method = "rf",
                   tuneGrid=data.frame(mtry=44),
-                  trControl = trainControl(method = "cv",
+                  trControl = trainControl(method = "cv", 
                                            number = 5,
                                            verboseIter = TRUE),
-                  preProcess = "zv")
+                  preProcess = "zv",
+                  metric = "RMSE")
 
 rf$pred_lat_0 <- predict(rf$lat_0, newdata = validset$build_0_lat)
 rf$error_lat_0 <- rf$pred_lat_0 - validset$build_0_lat$validset.build_0.LATITUDE
@@ -361,11 +360,12 @@ rf$rsquared_lat_0 <- (1 - (sum(rf$error_lat_0^2)
 rf$lat_1 <- train(trainset.build_1.LATITUDE ~ ., 
                   data = trainset$build_1_lat,
                   method = "rf",
-                  tuneGrid=data.frame(mtry=44),
+                  tuneGrid=data.frame(mtry=35),
                   trControl = trainControl(method = "cv",
                                            number = 5,
                                            verboseIter = TRUE),
-                  preProcess = "zv")
+                  preProcess = "zv",
+                  metric = "RMSE")
 
 rf$pred_lat_1 <- predict(rf$lat_1, newdata = validset$build_1_lat)
 rf$error_lat_1 <- rf$pred_lat_1  - validset$build_1_lat$validset.build_1.LATITUDE
@@ -378,12 +378,13 @@ rf$rsquared_lat_1 <- (1 - (sum(rf$error_lat_1^2)
 ## Build 2:
 rf$lat_2 <- train(trainset.build_2.LATITUDE ~ ., 
                   data = trainset$build_2_lat,
-                  tuneGrid=data.frame(mtry=44),
+                  tuneGrid=data.frame(mtry=48),
                   method = "rf",
                   trControl = trainControl(method = "cv",
                                            number = 5,
                                            verboseIter = TRUE),
-                  preProcess = "zv")
+                  preProcess = "zv",
+                  metric = "RMSE")
 
 rf$pred_lat_2 <- predict(rf$lat_2, newdata = validset$build_2_lat)
 rf$error_lat_2 <- rf$pred_lat_2 - validset$build_2_lat$validset.build_2.LATITUDE
@@ -398,11 +399,12 @@ rf$rsquared_lat_2 <- (1 - (sum(rf$error_lat_2^2)
 rf$lon_0 <- train(trainset.build_0.LONGITUDE ~ ., 
                   data = trainset$build_0_lon,
                   method = "rf",
-                  tuneGrid=data.frame(mtry=44),
+                  tuneGrid=data.frame(mtry=32),
                   trControl = trainControl(method = "cv",
                                            number = 5,
                                            verboseIter = TRUE),
-                  preProcess = "zv")
+                  preProcess = "zv",
+                  metric = "RMSE")
 
 rf$pred_lon_0 <- predict(rf$lon_0, newdata = validset$build_0_lon)
 rf$error_lon_0 <- rf$pred_lon_0 - validset$build_0_lon$validset.build_0.LONGITUDE
@@ -416,11 +418,12 @@ rf$rsquared_lon_0 <- (1 - (sum(rf$error_lon_0^2)
 rf$lon_1 <- train(trainset.build_1.LONGITUDE ~ ., 
                   data = trainset$build_1_lon,
                   method = "rf",
-                  tuneGrid=data.frame(mtry=44),
+                  tuneGrid=data.frame(mtry=15),
                   trControl = trainControl(method = "cv",
                                            number = 5,
                                            verboseIter = TRUE),
-                  preProcess = "zv")
+                  preProcess = "zv",
+                  metric = "RMSE")
 
 rf$pred_lon_1 <- predict(rf$lon_1, newdata = validset$build_1_lon)
 rf$error_lon_1 <- rf$pred_lon_1 - validset$build_1_lon$validset.build_1.LONGITUDE
@@ -434,11 +437,12 @@ rf$rsquared_lon_1 <- (1 - (sum(rf$error_lon_1^2)
 rf$lon_2 <- train(trainset.build_2.LONGITUDE ~ ., 
                   data = trainset$build_2_lon,
                   method = "rf",
-                  tuneGrid=data.frame(mtry=44),
+                  tuneGrid=data.frame(mtry=21),
                   trControl = trainControl(method = "cv",
                                            number = 5,
                                            verboseIter = TRUE),
-                  preProcess = "zv")
+                  preProcess = "zv",
+                  metric = "RMSE")
 
 rf$pred_lon_2 <- predict(rf$lon_2, newdata = validset$build_2_lon)
 rf$error_lon_2 <- rf$pred_lon_2 - validset$build_2_lon$validset.build_2.LONGITUDE
@@ -453,7 +457,7 @@ rf$rsquared_lon_2 <- (1 - (sum(rf$error_lon_2^2)
 rf$floor_0 <- train(trainset.build_0.FLOOR ~ ., 
                     data = trainset$build_0_floor,
                     method = "rf",
-                    tuneGrid=data.frame(mtry=44),
+                    tuneGrid=data.frame(mtry=40),
                     trControl = trainControl(method = "cv",
                                              number = 5,
                                              verboseIter = TRUE),
@@ -470,7 +474,7 @@ rf$accuracy_floor_0 <- ((sum(diag(rf$conf_mat_floor_0)))/
 rf$floor_1 <- train(trainset.build_1.FLOOR ~ ., 
                     data = trainset$build_1_floor,
                     method = "rf",
-                    tuneGrid=data.frame(mtry=44),
+                    tuneGrid=data.frame(mtry=18),
                     trControl = trainControl(method = "cv",
                                              number = 5,
                                              verboseIter = TRUE),
@@ -487,7 +491,7 @@ rf$accuracy_floor_1 <- ((sum(diag(rf$conf_mat_floor_1)))/
 rf$floor_2 <- train(trainset.build_2.FLOOR ~ ., 
                     data = trainset$build_2_floor,
                     method = "rf",
-                    tuneGrid=data.frame(mtry=44),
+                    tuneGrid=data.frame(mtry=25),
                     trControl = trainControl(method = "cv",
                                              number = 5,
                                              verboseIter = TRUE),
@@ -500,11 +504,89 @@ rf$conf_mat_floor_2 <- table(rf$pred_floor_2,
 rf$accuracy_floor_2 <- ((sum(diag(rf$conf_mat_floor_2)))/
                           (sum(rf$conf_mat_floor_2)))*100
 
+# GBM for FLOOR ----
+gbm <- list(c())
+## Build 0:
+gbm$floor_0 <- train(trainset.build_0.FLOOR ~ ., 
+                     data = trainset$build_0_floor,
+                     method = "gbm",
+                     trControl = trainControl(method = "cv",
+                                              number = 5,
+                                              verboseIter = TRUE),
+                     preProcess = "zv",
+                     metric = "Accuracy")
+
+gbm$pred_floor_0 <- predict(gbm$floor_0, newdata = validset$build_0_floor)
+gbm$conf_mat_floor_0 <- table(gbm$pred_floor_0, 
+                              validset$build_0_floor$validset.build_0.FLOOR)
+gbm$accuracy_floor_0 <- ((sum(diag(gbm$conf_mat_floor_0)))/
+                           (sum(gbm$conf_mat_floor_0)))*100
+
+## Build 1:
+gbm$floor_1 <- train(trainset.build_1.FLOOR ~ ., 
+                     data = trainset$build_1_floor,
+                     method = "gbm",
+                     trControl = trainControl(method = "cv",
+                                              number = 5,
+                                              verboseIter = TRUE),
+                     preProcess = "zv",
+                     metric = "Accuracy")
+
+gbm$pred_floor_1 <- predict(gbm$floor_1, newdata = validset$build_1_floor)
+gbm$conf_mat_floor_1 <- table(gbm$pred_floor_1, 
+                              validset$build_1_floor$validset.build_1.FLOOR)
+gbm$accuracy_floor_1 <- ((sum(diag(gbm$conf_mat_floor_1)))/
+                           (sum(gbm$conf_mat_floor_1)))*100
+
+## Build 2:
+gbm$floor_2 <- train(trainset.build_2.FLOOR ~ ., 
+                     data = trainset$build_2_floor,
+                     method = "gbm",
+                     trControl = trainControl(method = "cv",
+                                              number = 5,
+                                              verboseIter = TRUE),
+                     preProcess = "zv",
+                     metric = "Accuracy")
+
+gbm$pred_floor_2 <- predict(gbm$floor_2, newdata = validset$build_2_floor)
+gbm$conf_mat_floor_2 <- table(gbm$pred_floor_2, 
+                              validset$build_2_floor$validset.build_2.FLOOR)
+gbm$accuracy_floor_2 <- ((sum(diag(gbm$conf_mat_floor_2)))/
+                           (sum(gbm$conf_mat_floor_2)))*100
+#FLOOR: The majority vote ----
+majority <- list(c())
+# Build 0:
+majority$pred_0 <- as.factor(
+  ifelse(knn$pred_floor_0 == rf$pred_floor_0, rf$pred_floor_0, gbm$pred_floor_0))
+
+majority$conf_mat_0 <- table(majority$pred_0, 
+                             validset$build_0_floor$validset.build_0.FLOOR)
+majority$accuracy_0 <- ((sum(diag(majority$conf_mat_0)))/
+                          (sum(majority$conf_mat_0)))*100
+# Build 1:
+majority$pred_1 <- as.factor(
+  ifelse(rf$pred_floor_1 == gbm$pred_floor_1, gbm$pred_floor_1, knn$pred_floor_1))
+
+majority$conf_mat_1 <- table(majority$pred_1, 
+                             validset$build_1_floor$validset.build_1.FLOOR)
+majority$accuracy_1 <- ((sum(diag(majority$conf_mat_1)))/
+                          (sum(majority$conf_mat_1)))*100
+# Build 2:
+majority$pred_2 <- as.factor(
+  ifelse(rf$pred_floor_2 == knn$pred_floor_2, knn$pred_floor_2, gbm$pred_floor_2))
+
+majority$conf_mat_2 <- table(majority$pred_2, 
+                             validset$build_2_floor$validset.build_2.FLOOR)
+majority$accuracy_2 <- ((sum(diag(majority$conf_mat_2)))/
+                          (sum(majority$conf_mat_2)))*100
 # Creating data frames to compare models ----
 metrics <- list(c())
-metrics$building_accuracy <- data.frame(metrics = c("RF", "k-NN"), 
+metrics$building_accuracy <- data.frame(metrics = c("RF", "k-NN", "GBM", 
+                                                    "Majority Vote"), 
                                         values = c(build$accuracy_rf, 
-                                                   build$accuracy_knn))
+                                                   build$accuracy_knn, 
+                                                   build$accuracy_gbm, 
+                                                   build$accuracy_majority))
 
 metrics$latitude_rmse <- data.frame(metrics = c("kNN_0", "RF_0", "kNN_1", 
                                                 "RF_1",  "kNN_2", "RF_2"),
@@ -531,10 +613,16 @@ metrics$longitude_rsquared <- data.frame(metrics = c("kNN_0", "RF_0", "kNN_1",
                                                     knn$rsquared_lon_2, rf$rsquared_lon_2))
 
 metrics$floor_accuracy <- data.frame(metrics = c("kNN_0", "RF_0", "kNN_1", 
-                                                 "RF_1", "kNN_2", "RF_2"),
+                                                 "RF_1", "kNN_2", "RF_2",
+                                                 "GBM_1", "GBM_2", "GBM_3",
+                                                 "Majority_1", "Majority_2",
+                                                 "Majority_3"),
                                      values = c(knn$accuracy_floor_0, rf$accuracy_floor_0, 
                                                 knn$accuracy_floor_1, rf$accuracy_floor_1,
-                                                knn$accuracy_floor_2, rf$accuracy_floor_2))
+                                                knn$accuracy_floor_2, rf$accuracy_floor_2,
+                                                gbm$accuracy_floor_0, gbm$accuracy_floor_1,
+                                                gbm$accuracy_floor_2, majority$accuracy_0,
+                                                majority$accuracy_1, majority$accuracy_2))
 
 # Plotting Metrics----
 plots <- list(c())
