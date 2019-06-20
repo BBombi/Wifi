@@ -48,7 +48,7 @@ plot_ly(valid, x = ~LATITUDE, y = ~LONGITUDE, z = ~FLOOR,
 grid::grid.raster(readPNG("pictures/UJI_map.png"))
 
 # Removing duplicates: -----
-train <- train[!duplicated(train), ]
+train <- train[!duplicated(train[1:528]), ]
 # Preprocessing ----
 # Rescale WAPs units:
 train <- cbind(apply(train[1:520],2, function(x) 10^(x/10)*100), 
@@ -62,12 +62,13 @@ valid <- cbind(apply(valid[1:520], c(1,2), function(y)
   ifelse(y == 10^12, y <- 0, y <- y)), valid[521:529])
 
 # Removing Near Zero Variance WAPs:
-near0var <- nearZeroVar(train[ ,1:520], saveMetrics = TRUE)
+near0var <- nearZeroVar(train[ ,1:520], saveMetrics = TRUE, uniqueCut = 0.015)
 # New datasets
-newtrain <- train[ ,c(which(near0var$percentUnique > 0.010362695), 521:529)] %>% 
+newtrain <- train[ ,c(which(near0var$nzv == FALSE), 521:529)] %>% 
+  filter(apply(train[ ,1:520], 1, max) < 100) %>%
   dplyr::group_by(BUILDINGID, FLOOR, LATITUDE, LONGITUDE, PHONEID) %>%
-  dplyr::sample_n(3, replace = TRUE)
-newvalid <- valid[ ,c(which(near0var$percentUnique > 0.010362695), 521:529)]
+  dplyr::sample_n(4, replace = TRUE)
+newvalid <- valid[ ,c(which(near0var$nzv == FALSE), 521:529)]
 
 # Predicting Building ----
 build <- list(c())
@@ -95,7 +96,7 @@ tuneRF(build$train[grep("WAP", names(build$train), value=T)],
 
 build$rf <- randomForest(y = build$train$BUILDINGID,
                          x = build$train[grep("WAP", names(build$train), value=T)],
-                         importance = T, method = "rf", ntree=200, mtry=5)
+                         importance = T, method = "rf", ntree=100, mtry=5)
 
 build$pred_rf <- predict(build$rf, newdata = build$valid)
 build$conf_mat_rf <- table(build$pred_rf, build$valid$BUILDINGID)
@@ -127,79 +128,11 @@ build$pred_majority <- as.factor(
                 ifelse(build$pred_knn=='2' & build$pred_rf=='2' |
                          build$pred_knn=='2' & build$pred_gbm=='2' | 
                          build$pred_rf=='2' & build$pred_gbm=='2',
-                       '2',build$pred_gbm))))
+                       '2',build$pred_rf))))
 
 build$conf_mat_majority <- table(build$pred_majority, build$valid$BUILDINGID)
 build$accuracy_majority <- ((sum(diag(build$conf_mat_majority)))/
                               (sum(build$conf_mat_majority)))*100
-
-# # Separate data by building in train and valid----
-# trainset <- c()
-# for (i in 0:2) {
-#   trainset[[paste0("build_",i)]] <- newtrain %>% filter(BUILDINGID == i)
-# }
-# 
-# validset <- c()
-# for (i in 0:2) {
-#   validset[[paste0("build_",i)]] <- newvalid %>% filter(BUILDINGID == i)
-# }
-# 
-# rm(i, newtrain, newvalid)
-# 
-# # Create data frames per each feature ----
-# trainset$build_0_lat <- data.frame(trainset$build_0$LATITUDE, 
-#                                    trainset$build_0[,c(1:428)])
-# trainset$build_0_lon <- data.frame(trainset$build_0$LONGITUDE, 
-#                                    trainset$build_0[,c(1:428)])
-# trainset$build_0_floor <- data.frame(trainset$build_0$FLOOR, 
-#                                      trainset$build_0[,c(1:428)])
-# trainset$build_0_floor$trainset.build_0.FLOOR <- as.factor(
-#   trainset$build_0_floor$trainset.build_0.FLOOR)
-# 
-# trainset$build_1_lat <- data.frame(trainset$build_1$LATITUDE, 
-#                                    trainset$build_1[,c(1:428)])
-# trainset$build_1_lon <- data.frame(trainset$build_1$LONGITUDE, 
-#                                    trainset$build_1[,c(1:428)])
-# trainset$build_1_floor <- data.frame(trainset$build_1$FLOOR, 
-#                                      trainset$build_1[,c(1:428)])
-# trainset$build_1_floor$trainset.build_1.FLOOR <- as.factor(
-#   trainset$build_1_floor$trainset.build_1.FLOOR)
-# 
-# trainset$build_2_lat <- data.frame(trainset$build_2$LATITUDE, 
-#                                    trainset$build_2[,c(1:428)])
-# trainset$build_2_lon <- data.frame(trainset$build_2$LONGITUDE, 
-#                                    trainset$build_2[,c(1:428)])
-# trainset$build_2_floor <- data.frame(trainset$build_2$FLOOR, 
-#                                      trainset$build_2[,c(1:428)])
-# trainset$build_2_floor$trainset.build_2.FLOOR <- as.factor(
-#   trainset$build_2_floor$trainset.build_2.FLOOR)
-# 
-# validset$build_0_lat <- data.frame(validset$build_0$LATITUDE, 
-#                                    validset$build_0[,c(1:428)])
-# validset$build_0_lon <- data.frame(validset$build_0$LONGITUDE, 
-#                                    validset$build_0[,c(1:428)])
-# validset$build_0_floor <- data.frame(validset$build_0$FLOOR, 
-#                                      validset$build_0[,c(1:428)])
-# validset$build_0_floor$validset.build_0.FLOOR <- as.factor(
-#   validset$build_0_floor$validset.build_0.FLOOR)
-# 
-# validset$build_1_lat <- data.frame(validset$build_1$LATITUDE, 
-#                                    validset$build_1[,c(1:428)])
-# validset$build_1_lon <- data.frame(validset$build_1$LONGITUDE, 
-#                                    validset$build_1[,c(1:428)])
-# validset$build_1_floor <- data.frame(validset$build_1$FLOOR, 
-#                                      validset$build_1[,c(1:428)])
-# validset$build_1_floor$validset.build_1.FLOOR <- as.factor(
-#   validset$build_1_floor$validset.build_1.FLOOR)
-# 
-# validset$build_2_lat <- data.frame(validset$build_2$LATITUDE, 
-#                                    validset$build_2[,c(1:428)])
-# validset$build_2_lon <- data.frame(validset$build_2$LONGITUDE, 
-#                                    validset$build_2[,c(1:428)])
-# validset$build_2_floor <- data.frame(validset$build_2$FLOOR, 
-#                                      validset$build_2[,c(1:428)])
-# validset$build_2_floor$validset.build_2.FLOOR <- as.factor(
-#   validset$build_2_floor$validset.build_2.FLOOR)
 
 # Models for Latitude ----
 LAT <- list(c())
