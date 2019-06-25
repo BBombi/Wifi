@@ -19,7 +19,7 @@ valid <- read.csv("datasets/validationData.csv")
 #Summary some atributes 
 summary(train[,521:529])
 
-# Converting Floor and Phone ID into character variables ----
+# Converting factor variables ----
 train$BUILDINGID <- as.factor(train$BUILDINGID)
 valid$BUILDINGID <- as.factor(valid$BUILDINGID)
 train$PHONEID <- as.factor(train$PHONEID)
@@ -65,9 +65,10 @@ valid <- cbind(apply(valid[1:520], c(1,2), function(y)
 near0var <- nearZeroVar(train[ ,1:520], saveMetrics = TRUE, uniqueCut = 0.015)
 # New datasets
 newtrain <- train[ ,c(which(near0var$nzv == FALSE), 521:529)] %>% 
-  filter(apply(train[ ,1:520], 1, max) < 100) %>%
+  filter(apply(train[ ,1:520], 1, max) < 100, apply(train[ ,1:520], 1, sum) > 0) %>%
   dplyr::group_by(BUILDINGID, FLOOR, LATITUDE, LONGITUDE, PHONEID) %>%
   dplyr::sample_n(4, replace = TRUE)
+
 newvalid <- valid[ ,c(which(near0var$nzv == FALSE), 521:529)]
 
 # Predicting Building ----
@@ -96,7 +97,7 @@ tuneRF(build$train[grep("WAP", names(build$train), value=T)],
 
 build$rf <- randomForest(y = build$train$BUILDINGID,
                          x = build$train[grep("WAP", names(build$train), value=T)],
-                         importance = T, method = "rf", ntree=100, mtry=5)
+                         importance = T, method = "rf", ntree=200, mtry=20)
 
 build$pred_rf <- predict(build$rf, newdata = build$valid)
 build$conf_mat_rf <- table(build$pred_rf, build$valid$BUILDINGID)
@@ -116,7 +117,10 @@ build$pred_gbm <- predict(build$rf, newdata = build$valid)
 build$conf_mat_gbm <- table(build$pred_rf, build$valid$BUILDINGID)
 build$accuracy_gbm <- ((sum(diag(build$conf_mat_rf)))/
                          (sum(build$conf_mat_rf)))*100
-
+#Saving models:
+saveRDS(build$knn, file="Models/Idea1/build_knn.rds")
+saveRDS(build$rf, file="Models/Idea1/build_rf.rds")
+saveRDS(build$gbm, file="Models/Idea1/build_gbm.rds")
 # The majority vote
 build$pred_majority <- as.factor(
   ifelse(build$pred_knn=='0' & build$pred_rf=='0' | 
@@ -195,6 +199,10 @@ LAT$rmse_rf <- sqrt(mean(LAT$error_rf^2))
 LAT$rsquared_rf <- (1 - (sum(LAT$error_rf^2) / 
                            sum((LAT$valid$LATITUDE - mean(LAT$valid$LATITUDE)
                            )^2)))*100
+#Saving models:
+saveRDS(LAT$knn, file="Models/Idea1/LAT_knn.rds")
+saveRDS(LAT$RRF, file="Models/Idea1/LAT_RRF.rds")
+saveRDS(LAT$rf, file="Models/Idea1/LAT_rf.rds")
 
 # Ensembling models:
 LAT$pred_ensembled <- (predict(LAT$knn, newdata = LAT$valid) +
@@ -228,7 +236,7 @@ ggplot(LAT$valid,aes(x=lat_errors)) +
            label = paste0("ME (",round(mean(LAT$valid$lat_errors),2),")")) +
   geom_vline(xintercept = sqrt(mean(LAT$valid$lat_errors^2)), size = 1, colour="blue") +
   annotate("text", x = 19, y = 0.07, 
-           label = paste0("RMSE (",round(sqrt(mean(LON$valid$lon_errors^2)),2),
+           label = paste0("RMSE (",round(sqrt(mean(LAT$valid$lat_errors^2)),2),
                           ")"),colour="blue") +
   xlab("Error (meters)") +
   ggtitle("Distribution of errors")+
@@ -236,13 +244,9 @@ ggplot(LAT$valid,aes(x=lat_errors)) +
 
 # Methods for Longitud ----
 LON <- list(c())
-# # We include our predictions on Latitude and Building to this model:
-# newtrain$lat <- newtrain$LATITUDE
-# newvalid$lat <- (predict(LAT$knn, newdata = newvalid) +
-#                    predict(LAT$RRF, newdata = newvalid) +
-#                    predict(LAT$rf, newdata = newvalid))/3
-LON$train <- newtrain[ ,c(1:428,429,438)] #newtrain[ ,c(1:428,429,438,439)]
-LON$valid <- newvalid[ ,c(1:428,429,438)] #newvalid[ ,c(1:428,429,438,439)]
+
+LON$train <- newtrain[ ,c(1:428,429,438)]
+LON$valid <- newvalid[ ,c(1:428,429,438)]
 
 ## k-NN model:
 LON$knn <- train(LONGITUDE ~ .,
@@ -298,6 +302,10 @@ LON$rmse_rf <- sqrt(mean(LON$error_rf^2))
 LON$rsquared_rf <- (1 - (sum(LON$error_rf^2) / 
                            sum((LON$valid$LONGITUDE - mean(LON$valid$LONGITUDE)
                            )^2)))*100
+#Saving models:
+saveRDS(LON$knn, file="Models/Idea1/LON_knn.rds")
+saveRDS(LON$RRF, file="Models/Idea1/LON_RRF.rds")
+saveRDS(LON$rf, file="Models/Idea1/LON_rf.rds")
 
 # Ensembling models:
 LON$pred_ensembled <- (predict(LON$RRF, newdata = LON$valid) +
@@ -334,11 +342,6 @@ ggplot(LON$valid,aes(x=lon_errors)) +
   ggtitle("Distribution of errors")+
   theme_economist()
 
-#  #Applying to the datasets:
-# newtrain$lon <- newtrain$LONGITUDE
-# newvalid$lon <- (predict(LON$RRF, newdata = newvalid) +
-#                    predict(LON$rf, newdata = newvalid))/2
-
 # Methods for FLOOR ----
 FL <- list(c())
 # k-NN:
@@ -361,6 +364,8 @@ for (i in 0:2) {
                                            validnew$FLOOR)
   FL[[paste0("accuracy_knn_",i)]] <- ((sum(diag(FL[[paste0("conf_mat_knn_",i)]])))/
                                         (sum(FL[[paste0("conf_mat_knn_",i)]])))*100
+  #Saving Models:
+  saveRDS(FL[[paste0("knn_",i)]], file=paste0("Models/Idea1/Floor_knn_",i,".rds"))
 }
 
 # RF for FLOOR:
@@ -383,6 +388,8 @@ for (i in 0:2) {
                                           validnew$FLOOR)
   FL[[paste0("accuracy_rf_",i)]] <- ((sum(diag(FL[[paste0("conf_mat_rf_",i)]])))/
                                        (sum(FL[[paste0("conf_mat_rf_",i)]])))*100
+  #Saving Models:
+  saveRDS(FL[[paste0("rf_",i)]], file=paste0("Models/Idea1/Floor_rf_",i,".rds"))
 }
 
 # RRF for FLOOR:
@@ -405,6 +412,9 @@ for (i in 0:2) {
                                            validnew$FLOOR)
   FL[[paste0("accuracy_RRF_",i)]] <- ((sum(diag(FL[[paste0("conf_mat_RRF_",i)]])))/
                                         (sum(FL[[paste0("conf_mat_RRF_",i)]])))*100
+  
+  #Saving Models:
+  saveRDS(FL[[paste0("RRF_",i)]], file=paste0("Models/Idea1/Floor_RRF_",i,".rds"))
 }
 
 # GBM for FLOOR:
@@ -427,74 +437,95 @@ for (i in 0:2) {
                                            validnew$FLOOR)
   FL[[paste0("accuracy_gbm_",i)]] <- ((sum(diag(FL[[paste0("conf_mat_gbm_",i)]])))/
                                         (sum(FL[[paste0("conf_mat_gbm_",i)]])))*100
+  #Saving Models:
+  saveRDS(FL[[paste0("gbm_",i)]], file=paste0("Models/Idea1/Floor_gbm_",i,".rds"))
+  
+  #Majority vote:
+  FL[[paste0("pred_mv_",i)]] <- as.factor(
+    ifelse(FL[[paste0("pred_knn_",i)]]=='0' & 
+             FL[[paste0("pred_RRF_",i)]]=='0' | 
+             FL[[paste0("pred_knn_",i)]]=='0' & 
+             FL[[paste0("pred_gbm_",i)]]=='0' | 
+             FL[[paste0("pred_RRF_",i)]]=='0' & 
+             FL[[paste0("pred_gbm_",i)]]=='0','0',
+           ifelse(FL[[paste0("pred_knn_",i)]]=='1' & 
+                    FL[[paste0("pred_RRF_",i)]]=='1' | 
+                    FL[[paste0("pred_knn_",i)]]=='1' & 
+                    FL[[paste0("pred_gbm_",i)]]=='1' | 
+                    FL[[paste0("pred_RRF_",i)]]=='1' & 
+                    FL[[paste0("pred_gbm_",i)]]=='1','1',
+                  ifelse(FL[[paste0("pred_knn_",i)]]=='2' & 
+                           FL[[paste0("pred_RRF_",i)]]=='2' |
+                           FL[[paste0("pred_knn_",i)]]=='2' & 
+                           FL[[paste0("pred_gbm_",i)]]=='2' | 
+                           FL[[paste0("pred_RRF_",i)]]=='2' & 
+                           FL[[paste0("pred_gbm_",i)]]=='2',
+                         '2',ifelse(FL[[paste0("pred_knn_",i)]]=='3' & 
+                                      FL[[paste0("pred_RRF_",i)]]=='3' |
+                                      FL[[paste0("pred_knn_",i)]]=='3' & 
+                                      FL[[paste0("pred_gbm_",i)]]=='3' | 
+                                      FL[[paste0("pred_RRF_",i)]]=='3' & 
+                                      FL[[paste0("pred_gbm_",i)]]=='3',
+                                    '3',ifelse(FL[[paste0("pred_knn_",i)]]=='4' & 
+                                                 FL[[paste0("pred_RRF_",i)]]=='4' |
+                                                 FL[[paste0("pred_knn_",i)]]=='4' & 
+                                                 FL[[paste0("pred_gbm_",i)]]=='4' | 
+                                                 FL[[paste0("pred_RRF_",i)]]=='4' & 
+                                                 FL[[paste0("pred_gbm_",i)]]=='4',
+                                               '4',FL[[paste0("pred_rf_",i)]]
+                                               ))))))
+  
+  FL[[paste0("conf_mat_mv_",i)]] <- table(FL[[paste0("pred_mv_",i)]], 
+                                           validnew$FLOOR)
+  FL[[paste0("accuracy_mv_",i)]] <- ((sum(diag(FL[[paste0("conf_mat_mv_",i)]])))/
+                                        (sum(FL[[paste0("conf_mat_mv_",i)]])))*100
 }
-#FLOOR: The majority vote ----
-majority <- list(c())
-# Build 0:
-majority$pred_0 <- as.factor(
-  ifelse(knn$pred_floor_0 == rf$pred_floor_0, rf$pred_floor_0, gbm$pred_floor_0))
 
-majority$conf_mat_0 <- table(majority$pred_0, 
-                             validset$build_0_floor$validset.build_0.FLOOR)
-majority$accuracy_0 <- ((sum(diag(majority$conf_mat_0)))/
-                          (sum(majority$conf_mat_0)))*100
-# Build 1:
-majority$pred_1 <- as.factor(
-  ifelse(rf$pred_floor_1 == gbm$pred_floor_1, gbm$pred_floor_1, knn$pred_floor_1))
-
-majority$conf_mat_1 <- table(majority$pred_1, 
-                             validset$build_1_floor$validset.build_1.FLOOR)
-majority$accuracy_1 <- ((sum(diag(majority$conf_mat_1)))/
-                          (sum(majority$conf_mat_1)))*100
-# Build 2:
-majority$pred_2 <- as.factor(
-  ifelse(rf$pred_floor_2 == knn$pred_floor_2, knn$pred_floor_2, gbm$pred_floor_2))
-
-majority$conf_mat_2 <- table(majority$pred_2, 
-                             validset$build_2_floor$validset.build_2.FLOOR)
-majority$accuracy_2 <- ((sum(diag(majority$conf_mat_2)))/
-                          (sum(majority$conf_mat_2)))*100
 # Creating data frames to compare models ----
 metrics <- list(c())
 metrics$building_accuracy <- data.frame(metrics = c("RF", "k-NN", "GBM", 
-                                                    "Majority Vote"), 
-                                        values = c(build$accuracy_rf, 
-                                                   build$accuracy_knn, 
-                                                   build$accuracy_gbm, 
-                                                   build$accuracy_majority))
+                                                     "Majority Vote"), 
+                                         values = c(build$accuracy_rf, 
+                                                    build$accuracy_knn, 
+                                                    build$accuracy_gbm, 
+                                                    build$accuracy_majority))
 
 metrics$latitude_rmse <- data.frame(metrics = c("k-NN", "RF", "RRF", 
-                                                "Ensembled"),
-                                    values = c(LAT$rmse_knn, LAT$rmse_rf, 
-                                               LAT$rmse_RRF, LAT$rmse_ensembled))
+                                                 "Ensembled"),
+                                     values = c(LAT$rmse_knn, LAT$rmse_rf, 
+                                                LAT$rmse_RRF, LAT$rmse_ensembled))
 
 metrics$latitude_rsquared <- data.frame(metrics = c("k-NN", "RF", "RRF", 
-                                                    "Ensembled"),
-                                        values = c(LAT$rsquared_knn, LAT$rsquared_rf, 
-                                                   LAT$rsquared_RRF, 
-                                                   LAT$rsquared_ensembled))
+                                                     "Ensembled"),
+                                         values = c(LAT$rsquared_knn, LAT$rsquared_rf, 
+                                                    LAT$rsquared_RRF, 
+                                                    LAT$rsquared_ensembled))
 
 metrics$longitude_rmse <- data.frame(metrics = c("k-NN", "RF", "RRF", 
-                                                 "Ensembled"),
-                                     values = c(LON$rmse_knn, LON$rmse_rf, 
-                                                LON$rmse_RRF, LON$rmse_ensembled))
+                                                  "Ensembled"),
+                                      values = c(LON$rmse_knn, LON$rmse_rf, 
+                                                 LON$rmse_RRF, LON$rmse_ensembled))
 
 metrics$longitude_rsquared <- data.frame(metrics = c("k-NN", "RF", "RRF", 
-                                                     "Ensembled"),
-                                         values = c(LON$rsquared_knn, LON$rsquared_rf, 
-                                                    LON$rsquared_RRF, 
-                                                    LON$rsquared_ensembled))
+                                                      "Ensembled"),
+                                          values = c(LON$rsquared_knn, LON$rsquared_rf, 
+                                                     LON$rsquared_RRF, 
+                                                     LON$rsquared_ensembled))
 
-metrics$floor_accuracy <- data.frame(metrics = c("kNN_0", "RF_0", "kNN_1", 
-                                                 "RF_1", "kNN_2", "RF_2",
-                                                 "GBM_0", "GBM_1", "GBM_2",
-                                                 "RRF_0", "RRF_1", "RRF_2"),
-                                     values = c(FL$accuracy_knn_0, FL$accuracy_rf_0, 
-                                                FL$accuracy_knn_1, FL$accuracy_rf_1,
-                                                FL$accuracy_knn_2, FL$accuracy_rf_2,
-                                                FL$accuracy_gbm_0, FL$accuracy_gbm_1,
-                                                FL$accuracy_gbm_2, FL$accuracy_RRF_0,
-                                                FL$accuracy_RRF_1, FL$accuracy_RRF_2))
+metrics$floor_accuracy <- data.frame(metrics = c("0_k-NN", "0_RF", "1_k-NN", 
+                                                  "1_RF", "2_k-NN", "3_RF",
+                                                  "0_GBM", "1_GBM", "2_GBM",
+                                                  "0_Majority", "1_Majority",
+                                                  "2_Majority", "0_RRF", 
+                                                  "1_RRF", "2_RRF"),
+                                      values = c(FL$accuracy_knn_0, FL$accuracy_rf_0, 
+                                                 FL$accuracy_knn_1, FL$accuracy_rf_1,
+                                                 FL$accuracy_knn_2, FL$accuracy_rf_2,
+                                                 FL$accuracy_gbm_0, FL$accuracy_gbm_1,
+                                                 FL$accuracy_gbm_2, FL$accuracy_mv_0,
+                                                 FL$accuracy_mv_1, FL$accuracy_mv_2,
+                                                 FL$accuracy_RRF_0, FL$accuracy_RRF_1,
+                                                 FL$accuracy_mv_2))
 
 metrics$floor_accuracy <- data.frame(metrics = c("GBM_0", "kNN_1","kNN_2"),
                                      values = c(FL$accuracy_gbm_0, FL$accuracy_knn_1, 
@@ -577,8 +608,44 @@ plots$f <- metrics$floor_accuracy %>%
        y = "Accuracy",
        title = "Floor") +
   theme_light() +
-  scale_fill_brewer(palette = "Set3") +
+  scale_fill_manual(values = colorRampPalette(brewer.pal(8, "Accent"))(9)) +
   theme(legend.position="none")
 
 plots$m <- grid.arrange(plots$a, plots$b, plots$c, plots$d, plots$e, plots$f, 
-                        ncol = 1)
+                        ncol = 2)
+
+# Predicting over the TEST set----
+testset <- read.csv("datasets/trainingData.csv")
+
+testset <- cbind(apply(testset[1:520],2, function(x) 10^(x/10)*100), 
+              test[521:529])
+testset <- cbind(apply(testset[1:520], c(1,2), function(y) 
+  ifelse(y == 10^12, y <- 0, y <- y)), testset[521:529])
+# Building
+build$pred_rf <- predict(build$rf, newdata = testset)
+build$pred_knn <- predict(build$knn, newdata = testset)
+build$pred_gbm <- predict(build$gbm, newdata = testset)
+
+testset$build <- as.factor(
+  ifelse(build$pred_knn=='0' & build$pred_rf=='0' | 
+           build$pred_knn=='0' & build$pred_gbm=='0' | 
+           build$pred_rf=='0' & build$pred_gbm=='0','0',
+         ifelse(build$pred_knn=='1' & build$pred_rf=='1' | 
+                  build$pred_knn=='1' & build$pred_gbm=='1' | 
+                  build$pred_rf=='1' & build$pred_gbm=='1','1',
+                ifelse(build$pred_knn=='2' & build$pred_rf=='2' |
+                         build$pred_knn=='2' & build$pred_gbm=='2' | 
+                         build$pred_rf=='2' & build$pred_gbm=='2',
+                       '2',build$pred_rf))))
+ # Latitude:
+testset$LATITUDE <- (predict(LAT$knn, newdata = testset) +
+                    predict(LAT$RRF, newdata = testset) +
+                    predict(LAT$rf, newdata = testset))/3
+ # Longitude:
+testset$LONGITUDE <- (predict(LON$RRF, newdata = testset) +
+                        predict(LON$rf, newdata = testset) +
+                        predict(LON$knn, newdata = testset))/3
+ # Floor:
+testset$FLOOR <- ifelse(testset$build == 0, predict(FL$gbm_0, testset), 
+                        ifelse(testset$build == 1, predict(FL$knn_1, testset), 
+                               predict(FL$knn_2, testset)))
