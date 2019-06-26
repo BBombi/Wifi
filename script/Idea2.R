@@ -68,7 +68,7 @@ valid <- cbind(apply(valid[1:520], c(1,2), function(y)
 # Removing Near Zero Variance WAPs:
 near0var <- nearZeroVar(train[ ,1:520], saveMetrics = TRUE, uniqueCut = 0.015)
 # New datasets
-trainsample <- newtrain <- train[ ,c(which(near0var$nzv == FALSE), 521:529)] %>% 
+trainsample <- train[ ,c(which(near0var$nzv == FALSE), 521:529)] %>% 
   filter(apply(train[ ,1:520], 1, max) < 100, apply(train[ ,1:520], 1, sum) > 0) %>%
   dplyr::group_by(BUILDINGID, FLOOR, LATITUDE, LONGITUDE, PHONEID) %>%
   dplyr::sample_n(4, replace = TRUE)
@@ -351,6 +351,145 @@ ggplot(LON$valid,aes(x=lon_errors)) +
   xlab("Error (meters)") +
   ggtitle("Distribution of errors")+
   theme_economist()
+# Methods for FLOOR ----
+FL <- list(c())
+# k-NN:
+for (i in 0:2) {
+  trainnew <- newtrain[,c(1:428,431,438)] %>% filter(build == i)
+  validnew <- newvalid[,c(1:428,431,438)] %>% filter(build == i)
+  trainnew$FLOOR <- as.factor(trainnew$FLOOR)
+  validnew$FLOOR <- as.factor(validnew$FLOOR)
+  FL[[paste0("knn_",i)]] <- train(FLOOR ~ .,
+                                  data = trainnew,
+                                  method = "knn",
+                                  trControl = trainControl(method = "cv",
+                                                           number = 3,
+                                                           verboseIter = TRUE),
+                                  preProcess = "zv",
+                                  metric = "Accuracy")
+  
+  FL[[paste0("pred_knn_",i)]] <- predict(FL[[paste0("knn_",i)]], validnew)
+  FL[[paste0("conf_mat_knn_",i)]] <- table(FL[[paste0("pred_knn_",i)]], 
+                                           validnew$FLOOR)
+  FL[[paste0("accuracy_knn_",i)]] <- ((sum(diag(FL[[paste0("conf_mat_knn_",i)]])))/
+                                        (sum(FL[[paste0("conf_mat_knn_",i)]])))*100
+  #Saving Models:
+  saveRDS(FL[[paste0("knn_",i)]], file=paste0("Models/Idea2/Floor_knn_",i,".rds"))
+}
+
+# RF for FLOOR:
+for (i in 0:2) {
+  trainnew <- newtrain[,c(1:428,431,438)] %>% filter(build == i)
+  validnew <- newvalid[,c(1:428,431,438)] %>% filter(build == i)
+  trainnew$FLOOR <- as.factor(trainnew$FLOOR)
+  validnew$FLOOR <- as.factor(validnew$FLOOR)
+  FL[[paste0("rf_",i)]] <- train(FLOOR ~ .,
+                                 data = trainnew,
+                                 method = "rf",
+                                 trControl = trainControl(method = "cv",
+                                                          number = 3,
+                                                          verboseIter = TRUE),
+                                 preProcess = "zv",
+                                 metric = "Accuracy")
+  
+  FL[[paste0("pred_rf_",i)]] <- predict(FL[[paste0("rf_",i)]], validnew)
+  FL[[paste0("conf_mat_rf_",i)]] <- table(FL[[paste0("pred_rf_",i)]], 
+                                          validnew$FLOOR)
+  FL[[paste0("accuracy_rf_",i)]] <- ((sum(diag(FL[[paste0("conf_mat_rf_",i)]])))/
+                                       (sum(FL[[paste0("conf_mat_rf_",i)]])))*100
+  #Saving Models:
+  saveRDS(FL[[paste0("rf_",i)]], file=paste0("Models/Idea2/Floor_rf_",i,".rds"))
+}
+
+# RRF for FLOOR:
+for (i in 0:2) {
+  trainnew <- newtrain[,c(1:428,431,438)] %>% filter(build == i)
+  validnew <- newvalid[,c(1:428,431,438)] %>% filter(build == i)
+  trainnew$FLOOR <- as.factor(trainnew$FLOOR)
+  validnew$FLOOR <- as.factor(validnew$FLOOR)
+  FL[[paste0("RRF_",i)]] <- train(FLOOR ~ .,
+                                  data = trainnew,
+                                  method = "RRF",
+                                  trControl = trainControl(method = "cv",
+                                                           number = 3,
+                                                           verboseIter = TRUE),
+                                  preProcess = "zv",
+                                  metric = "Accuracy")
+
+  FL[[paste0("pred_RRF_",i)]] <- predict(FL[[paste0("RRF_",i)]], validnew)
+  FL[[paste0("conf_mat_RRF_",i)]] <- table(FL[[paste0("pred_RRF_",i)]], 
+                                           validnew$FLOOR)
+  FL[[paste0("accuracy_RRF_",i)]] <- ((sum(diag(FL[[paste0("conf_mat_RRF_",i)]])))/
+                                        (sum(FL[[paste0("conf_mat_RRF_",i)]])))*100
+  
+  #Saving Models:
+  saveRDS(FL[[paste0("RRF_",i)]], file=paste0("Models/Idea2/Floor_RRF_",i,".rds"))
+}
+
+# GBM for FLOOR:
+for (i in 0:2) {
+  trainnew <- newtrain[,c(1:428,431,438)] %>% filter(build == i)
+  validnew <- newvalid[,c(1:428,431,438)] %>% filter(build == i)
+  trainnew$FLOOR <- as.factor(trainnew$FLOOR)
+  validnew$FLOOR <- as.factor(validnew$FLOOR)
+  FL[[paste0("gbm_",i)]] <- train(FLOOR ~ .,
+                                  data = trainnew,
+                                  method = "gbm",
+                                  trControl = trainControl(method = "cv",
+                                                           number = 3,
+                                                           verboseIter = TRUE),
+                                  preProcess = "zv",
+                                  metric = "Accuracy")
+  
+  FL[[paste0("pred_gbm_",i)]] <- predict(FL[[paste0("gbm_",i)]], validnew)
+  FL[[paste0("conf_mat_gbm_",i)]] <- table(FL[[paste0("pred_gbm_",i)]], 
+                                           validnew$FLOOR)
+  FL[[paste0("accuracy_gbm_",i)]] <- ((sum(diag(FL[[paste0("conf_mat_gbm_",i)]])))/
+                                        (sum(FL[[paste0("conf_mat_gbm_",i)]])))*100
+  #Saving Models:
+  saveRDS(FL[[paste0("gbm_",i)]], file=paste0("Models/Idea2/Floor_gbm_",i,".rds"))
+  
+  #Majority vote:
+  FL[[paste0("pred_mv_",i)]] <- as.factor(
+    ifelse(FL[[paste0("pred_knn_",i)]]=='0' & 
+             FL[[paste0("pred_RRF_",i)]]=='0' | 
+             FL[[paste0("pred_knn_",i)]]=='0' & 
+             FL[[paste0("pred_gbm_",i)]]=='0' | 
+             FL[[paste0("pred_RRF_",i)]]=='0' & 
+             FL[[paste0("pred_gbm_",i)]]=='0','0',
+           ifelse(FL[[paste0("pred_knn_",i)]]=='1' & 
+                    FL[[paste0("pred_RRF_",i)]]=='1' | 
+                    FL[[paste0("pred_knn_",i)]]=='1' & 
+                    FL[[paste0("pred_gbm_",i)]]=='1' | 
+                    FL[[paste0("pred_RRF_",i)]]=='1' & 
+                    FL[[paste0("pred_gbm_",i)]]=='1','1',
+                  ifelse(FL[[paste0("pred_knn_",i)]]=='2' & 
+                           FL[[paste0("pred_RRF_",i)]]=='2' |
+                           FL[[paste0("pred_knn_",i)]]=='2' & 
+                           FL[[paste0("pred_gbm_",i)]]=='2' | 
+                           FL[[paste0("pred_RRF_",i)]]=='2' & 
+                           FL[[paste0("pred_gbm_",i)]]=='2',
+                         '2',ifelse(FL[[paste0("pred_knn_",i)]]=='3' & 
+                                      FL[[paste0("pred_RRF_",i)]]=='3' |
+                                      FL[[paste0("pred_knn_",i)]]=='3' & 
+                                      FL[[paste0("pred_gbm_",i)]]=='3' | 
+                                      FL[[paste0("pred_RRF_",i)]]=='3' & 
+                                      FL[[paste0("pred_gbm_",i)]]=='3',
+                                    '3',ifelse(FL[[paste0("pred_knn_",i)]]=='4' & 
+                                                 FL[[paste0("pred_RRF_",i)]]=='4' |
+                                                 FL[[paste0("pred_knn_",i)]]=='4' & 
+                                                 FL[[paste0("pred_gbm_",i)]]=='4' | 
+                                                 FL[[paste0("pred_RRF_",i)]]=='4' & 
+                                                 FL[[paste0("pred_gbm_",i)]]=='4',
+                                               '4',FL[[paste0("pred_rf_",i)]]
+                                    ))))))
+  
+  FL[[paste0("conf_mat_mv_",i)]] <- table(FL[[paste0("pred_mv_",i)]], 
+                                          validnew$FLOOR)
+  FL[[paste0("accuracy_mv_",i)]] <- ((sum(diag(FL[[paste0("conf_mat_mv_",i)]])))/
+                                       (sum(FL[[paste0("conf_mat_mv_",i)]])))*100
+}
+
 
 # Creating data frames to compare models ----
 metrics2 <- list(c())
@@ -396,7 +535,7 @@ metrics2$floor_accuracy <- data.frame(metrics = c("0_k-NN", "0_RF", "1_k-NN",
                                                 FL$accuracy_gbm_2, FL$accuracy_mv_0,
                                                 FL$accuracy_mv_1, FL$accuracy_mv_2,
                                                 FL$accuracy_RRF_0, FL$accuracy_RRF_1,
-                                                FL$accuracy_mv_2))
+                                                FL$accuracy_RRF_2))
 
 # Plotting Metrics----
 plots2 <- list(c())
@@ -480,3 +619,80 @@ plots2$f <- metrics2$floor_accuracy %>%
 
 plots2$m <- grid.arrange(plots2$a, plots2$b, plots2$c, plots2$d, plots2$e, 
                          plots2$f, ncol = 2)
+
+# Reloading the models ----
+FL$gbm_0 <- readRDS("Models/Idea2/Floor_gbm_0.rds")
+FL$gbm_1 <- readRDS("Models/Idea2/Floor_gbm_1.rds")
+FL$gbm_2 <- readRDS("Models/Idea2/Floor_gbm_2.rds")
+FL$knn_0 <- readRDS("Models/Idea2/Floor_knn_0.rds")
+FL$knn_1 <- readRDS("Models/Idea2/Floor_knn_1.rds")
+FL$knn_2 <- readRDS("Models/Idea2/Floor_knn_2.rds")
+FL$rf_0 <- readRDS("Models/Idea2/Floor_rf_0.rds")
+FL$rf_1 <- readRDS("Models/Idea2/Floor_rf_1.rds")
+FL$rf_2 <- readRDS("Models/Idea2/Floor_rf_2.rds")
+FL$RRF_0 <- readRDS("Models/Idea2/Floor_RRF_0.rds")
+FL$RRF_1 <- readRDS("Models/Idea2/Floor_RRF_1.rds")
+FL$RRF_2 <- readRDS("Models/Idea2/Floor_RRF_2.rds")
+build$gbm <- readRDS("Models/Idea2/build_gbm.rds")
+build$knn <- readRDS("Models/Idea2/build_knn.rds")
+build$rf <- readRDS("Models/Idea2/build_rf.rds")
+LAT$knn <- readRDS("Models/Idea2/LAT_knn.rds")
+LAT$rf <- readRDS("Models/Idea2/LAT_rf.rds")
+LAT$RRF <- readRDS("Models/Idea2/LAT_RRF.rds")
+LON$knn <- readRDS("Models/Idea2/LON_knn.rds")
+LON$rf <- readRDS("Models/Idea2/LON_rf.rds")
+LON$RRF <- readRDS("Models/Idea2/LON_RRF.rds")
+
+# Predicting over the TEST set----
+test <- read.csv("datasets/testData.csv")
+
+test <- cbind(apply(test[1:520],2, function(x) 10^(x/10)*100), 
+                 test[521:529])
+test <- cbind(apply(test[1:520], c(1,2), function(y) 
+  ifelse(y == 10^12, y <- 0, y <- y)), test[521:529])
+
+test$ID <- c(1:nrow(test))
+
+# Building
+build$pred_rf <- predict(build$rf, newdata = test)
+build$pred_knn <- predict(build$knn, newdata = test)
+build$pred_gbm <- predict(build$gbm, newdata = test)
+
+test$build <- as.factor(
+  ifelse(build$pred_knn=='0' & build$pred_rf=='0' | 
+           build$pred_knn=='0' & build$pred_gbm=='0' | 
+           build$pred_rf=='0' & build$pred_gbm=='0','0',
+         ifelse(build$pred_knn=='1' & build$pred_rf=='1' | 
+                  build$pred_knn=='1' & build$pred_gbm=='1' | 
+                  build$pred_rf=='1' & build$pred_gbm=='1','1',
+                ifelse(build$pred_knn=='2' & build$pred_rf=='2' |
+                         build$pred_knn=='2' & build$pred_gbm=='2' | 
+                         build$pred_rf=='2' & build$pred_gbm=='2',
+                       '2',build$pred_rf))))
+# Latitude:
+test$LATITUDE <- (predict(LAT$knn, newdata = test) +
+                       predict(LAT$RRF, newdata = test) +
+                       predict(LAT$rf, newdata = test))/3
+# Longitude:
+test$LONGITUDE <- (predict(LON$RRF, newdata = test) +
+                        predict(LON$rf, newdata = test) +
+                        predict(LON$knn, newdata = test))/3
+# Floor:
+test0 <- test %>% filter(build == 0)
+test1 <- test %>% filter(build == 1)
+test2 <- test %>% filter(build == 2)
+test0$FLOOR <- predict(FL$gbm_0, test0)
+test1$FLOOR <- predict(FL$knn_1, test1)
+test2$FLOOR <- predict(FL$gbm_2, test2)
+test <- rbind(test0, test1, test2)
+rm(test0, test1, test2)
+test <- test[order(test$ID), ]
+
+write_csv(test[c(522,521,523)], "predictions/BorjaBombi_Idea2.csv")
+
+plot_ly(test, x = ~LATITUDE, y = ~LONGITUDE, z = ~FLOOR, 
+        color = ~build, colors = c("#BF382A", "#1ABC9C", "#0C4B8E")) %>% 
+  add_markers() %>% layout(scene = list(xaxis = list(title = 'Latitude'),
+                                        yaxis = list(title = 'Longitude'),
+                                        zaxis = list(title = 'Floor')),
+                           title = "Training Data")
