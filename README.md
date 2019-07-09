@@ -1,4 +1,4 @@
-# Wi-Fi Location
+# Wi-Fi Location :round_pushpin:
 
 ## Data Set Information:
 
@@ -34,10 +34,10 @@ Information about who (user), how (android device & version) and when (timestamp
 |Attribute 526 (RelativePosition)| Relative position with respect to the Space (1 - Inside, 2 - Outside in Front of the door). Categorical integer values.|
 |Attribute 527 (UserID)| User identifier (see below). Categorical integer values.|
 |Attribute 528 (PhoneID)| Android device identifier (see below). Categorical integer values.|
-|Attribute 529 (Timestamp)| UNIX Time when the capture was taken. Integer value.|
+|Attribute 529 (Timestamp)| :stopwatch: UNIX Time when the capture was taken. Integer value.|
  
 
-|UserID :id: | Anonymized| User Height (cm)|
+|UserID :walking:| Anonymized| User Height (cm)|
 |----|----|----|
 |0|USER0000 (Validation User)| N/A |
 |1|USER0001 |170|
@@ -60,7 +60,7 @@ Information about who (user), how (android device & version) and when (timestamp
 |18|USER0018 |162|
 
 
-|PhoneID| Android Device| Android Ver. |UserID|
+|PhoneID :iphone:| Android Device| Android Ver. |UserID|
 |----|----|----|----|
 |0| Celkon A27| 4.0.4(6577)| 0| 
 |1| GT-I8160| 2.3.6| 8|
@@ -88,12 +88,16 @@ Information about who (user), how (android device & version) and when (timestamp
 |23| Transformer TF101| 4.0.3| 2|
 |24| bq Curie| 4.1.1| 12|
 
-## My experience:
+## My experience :bowtie: :
 
- ## Pre-processing and methods:
- ### Pre-processing:
-  ##### 1.- Re-scale the WAP's from -104 dBm to 0 dBm (plus "100 dBm" for the ones with no signal) using the mW (miliWatts). I've followed the formula:
-  ##### dBm =10 * log(P) -> where "P" is a Power observation, mesured in mW.
-  ###### And I have also converted the no singal to "0 mW", so now the scale is from 0 to 1 (where 0 indicates no signal at all, and 1 will indicate the unreallistic perfect signal).
+ ### Pre-processing and methods:
+ #### Pre-processing:
   
-   2.- 
+  **1.-** Re-scale the WAP's from -104 dBm to 0 dBm (plus "100 dBm" for the ones with no signal) using the mW (miliWatts). I've followed the formula:
+  > dBm =10 * log(*P*) -> where "P" is a Power observation, measured in mW.
+
+  And I have also converted the no signal to "0 mW", so now the scale is from 0 to 1 (where 0 indicates no signal at all, and 1 will indicate the unrealistic perfect signal).
+  
+  **2.-** Removing duplicates: I have applied different approaches against the duplicates. 
+  The main one is to consider all features to be a duplicate, but I have also consider all features except the Timestamp to check if there were duplicities.
+   
